@@ -1,0 +1,8 @@
+{
+	"name": "demo-bad-manifest-plugin",
+	"version": "1.0.0",
+	"type": "module",
+	"pi": {
+		"extensions": "not-an-array"
+	}
+}
