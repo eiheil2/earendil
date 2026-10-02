@@ -228,6 +228,8 @@ const AI_GATEWAY_BASE_URL = "https://ai-gateway.vercel.sh";
 const AI_GATEWAY_TYPESAFE_BASE_URL = "https://ai-gateway.vercel.sh/typesafe/v1";
 const VERTEX_BASE_URL = "https://{location}-aiplatform.googleapis.com";
 const NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1";
+// models.dev lists Nebius under its Token Factory endpoint (`api` field).
+const NEBIUS_BASE_URL = "https://api.tokenfactory.nebius.com/v1";
 const NVIDIA_HEADERS = {
 	"NVCF-POLL-SECONDS": "3600",
 } as const;
@@ -1913,6 +1915,33 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					maxTokens: m.limit?.output || 4096,
 				});
 				recordModelsDevReasoningOptions("cerebras", modelId, m);
+			}
+		}
+
+		// Process Nebius models
+		if (data.nebius?.models) {
+			for (const [modelId, model] of Object.entries(data.nebius.models)) {
+				const m = model as ModelsDevModel;
+				if (m.tool_call !== true) continue;
+
+				models.push({
+					id: modelId,
+					name: m.name || modelId,
+					api: "openai-completions",
+					provider: "nebius",
+					baseUrl: NEBIUS_BASE_URL,
+					reasoning: m.reasoning === true,
+					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
+					cost: {
+						input: m.cost?.input || 0,
+						output: m.cost?.output || 0,
+						cacheRead: m.cost?.cache_read || 0,
+						cacheWrite: m.cost?.cache_write || 0,
+					},
+					contextWindow: m.limit?.context || 4096,
+					maxTokens: m.limit?.output || 4096,
+				});
+				recordModelsDevReasoningOptions("nebius", modelId, m);
 			}
 		}
 

@@ -53,6 +53,7 @@ export type KnownProvider =
 	| "xai"
 	| "groq"
 	| "cerebras"
+	| "nebius"
 	| "openrouter"
 	| "vercel-ai-gateway"
 	| "zai"
@@ -1093,6 +1094,22 @@ export interface ModelInputLimits {
 	images?: ModelImageInputLimits;
 }
 
+/**
+ * Optional model-kind axis (plan-features #4). Only literals that a source tree
+ * actually proves are listed here; the two agent-runner members are reserved
+ * values from the oh-my-pi catalog (#3) and are not produced by any built-in
+ * pi catalog yet. Adding a member is additive because `ModelKind` falls back to
+ * `string`, mirroring `Api` (`types.ts:29`) and `ProviderId` (`types.ts:82`).
+ */
+export type KnownModelKind =
+	/** oh-my-pi agent-runner kind; reserved, no pi catalog emits it yet. */
+	| "cursor-agent"
+	/** oh-my-pi agent-runner kind; reserved, no pi catalog emits it yet. */
+	| "devin-agent";
+
+/** Model kind with the standard open-string fallback. */
+export type ModelKind = KnownModelKind | (string & {});
+
 /** Fields shared by every catalog entry, regardless of what you can do with it. */
 export interface BaseModel<TApi extends string> {
 	id: string;
@@ -1101,6 +1118,12 @@ export interface BaseModel<TApi extends string> {
 	provider: ProviderId;
 	baseUrl: string;
 	input: ("text" | "image")[];
+	/**
+	 * Optional classification tag. Absent from every built-in catalog entry today;
+	 * a missing value means "unclassified", not a change of model semantics
+	 * (same pattern as `Model.type`, where absent means chat).
+	 */
+	kind?: ModelKind;
 	/** Provider input limits and cache-safe preprocessing metadata. */
 	inputLimits?: ModelInputLimits;
 	cost: ModelCost;

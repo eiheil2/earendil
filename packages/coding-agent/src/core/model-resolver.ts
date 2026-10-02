@@ -35,6 +35,7 @@ export const defaultModelPerProvider: Partial<Record<KnownProvider, string>> = {
 	xai: "grok-4.7",
 	groq: "openai/gpt-oss-120b",
 	cerebras: "gpt-oss-120b",
+	nebius: "openai/gpt-oss-120b",
 	zai: "glm-5.3",
 	"zai-coding-cn": "glm-5.3",
 	mistral: "devstral-medium-latest",

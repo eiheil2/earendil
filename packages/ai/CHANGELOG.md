@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added the `nebius` built-in provider (OpenAI-compatible chat catalog from models.dev, authenticated via `NEBIUS_API_KEY`).
+- Added the optional model-kind axis: `KnownModelKind`/`ModelKind` types, `BaseModel.kind`, and the `isModelKind()` guard. Existing catalog entries stay unclassified; a missing `kind` means unclassified.
+
 ### Changed
 
 - Anthropic models with native mid-conversation tool changes now use the `inline-tools-2026-09-15` beta: later tools are defined by value in `tool_addition` blocks instead of being appended to the top-level tool list, and redefining a tool under the same name no longer falls back to resending the full tool list, so the prompt cache survives it. Upgraded `@anthropic-ai/sdk` to 0.129.0.

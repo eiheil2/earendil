@@ -62,7 +62,7 @@ import {
 import { normalizeContext } from "./utils/transcript.ts";
 
 export { ModelsError, type ModelsErrorCode } from "./auth/resolve.ts";
-export { getModelType, isModelType } from "./utils/model-operations.ts";
+export { getModelType, isModelKind, isModelType } from "./utils/model-operations.ts";
 
 export interface ModelsPublication {
 	/** Provider-selected persisted catalog. Omit to leave storage unchanged; null deletes it. */

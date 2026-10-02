@@ -8,6 +8,7 @@ import type {
 	ImageApi,
 	ImageModel,
 	Model,
+	ModelKind,
 	ModelType,
 	ModelTypeMap,
 } from "../types.ts";
@@ -21,6 +22,15 @@ export function getModelType(model: AnyModel): ModelType {
 /** Runtime-checked model type narrowing, including legacy chat models without `type`. */
 export function isModelType<TType extends ModelType>(model: AnyModel, type: TType): model is ModelTypeMap[TType] {
 	return getModelType(model) === type;
+}
+
+/**
+ * Reads the optional `kind` axis. Returns false for unclassified models and for
+ * any kind other than the requested one; the open `ModelKind` string fallback
+ * means callers must not treat `kind` as a closed union.
+ */
+export function isModelKind(model: AnyModel, kind: ModelKind): boolean {
+	return model.kind === kind;
 }
 
 export function assertChatModel(model: AnyModel): asserts model is Model<Api> {

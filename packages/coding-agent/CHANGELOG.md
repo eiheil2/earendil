@@ -5,6 +5,7 @@
 ### Added
 
 - Added a copy key (`app.message.copy`, default `ctrl+x`) to OAuth sign-in screens in `/login`, `/mcp`, and `/mcp login`, which copies the sign-in URL when the browser cannot be opened or the wrapped link cannot be selected.
+- Added `nebius` to the built-in provider defaults (`openai/gpt-oss-120b`) so the provider is discoverable without an explicit `--model`.
 
 ### Fixed
 
