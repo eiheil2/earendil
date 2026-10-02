@@ -112,6 +112,15 @@ git -C unified config user.email "phase0@local"
 | Node 要求 | `>=22.19.0`（`engines`）；本机实测 node v26.0.0 / npm 12.1.0 |
 | 收敛原则 | 构建系统**只保留这一套**（MERGE-FINAL §1.2-4）。oh-my-pi 的 Bun/Bazel 层、DSH 的 pnpm+tsc **不引入**。Bun/Node 接触面须经抽象接口（如 `SessionStorageBackend`）隔离 |
 
+### 5.1 Phase 0 已验证的构建事实
+
+| 步骤 | 结果 |
+|---|---|
+| `npm ci` | ✅ 成功（319 packages）。注意 npm 12 的 `allowScripts` 门禁拦了 7 个包的 install scripts（含 `esbuild`），但平台二进制 `@esbuild/win32-x64` 就位、`esbuild --version` = 0.28.2，不影响构建 |
+| `npm run build` | ✅ 成功（13 个包全部产出 `dist/`；`Built packages\coding-agent\dist\bundle (74 files, 8.6 MiB)`） |
+| **可复现构建前提（重要）** | ⚠️ `packages/ai/src/providers/data/` 被 `.gitignore` 排除 —— **模型目录数据是从 models.dev 拉取的生成产物**。新克隆必须能访问 `https://models.dev`（或先跑 `npm run hydrate:model-data`）才能构建 `packages/ai`。`npm run build:offline` 在未 hydrate 的新克隆上必然失败（`ENOENT ... src/providers/data/amazon-bedrock.json`）。这不是本机缺陷，是上游前提 |
+| `npm test` | ❌ 失败（Windows 上非绿，详见 `C:\Users\eihei\pi-compare\PHASE0-STATUS.md` §4.4）。已定位 `scripts/coding-agent-consumer.mjs:13-20` 的 `shell: true` + 未转义 `C:\Program Files\...` 为一个上游可移植性缺陷，且它会**短路掉全部 workspace 测试** |
+
 ---
 
 ## 6. 移植登记处（后续阶段在此追加）
