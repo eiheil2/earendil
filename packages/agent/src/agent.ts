@@ -137,6 +137,12 @@ export interface AgentOptions {
 	thinkingBudgets?: ThinkingBudgets;
 	transport?: Transport;
 	maxRetryDelayMs?: number;
+	/**
+	 * Absolute wall-clock deadline in Unix epoch milliseconds. Each run folds it into its abort
+	 * signal: the run aborts with a `DOMException` named `TimeoutError` as soon as the clock passes
+	 * it, or immediately if it already passed when the run starts.
+	 */
+	deadline?: number;
 	toolExecution?: ToolExecutionMode;
 }
 
@@ -224,6 +230,11 @@ export class Agent {
 	public transport: Transport;
 	/** Optional cap for provider-requested retry delays. */
 	public maxRetryDelayMs?: number;
+	/**
+	 * Absolute wall-clock deadline in Unix epoch milliseconds. Runs fold it into their abort
+	 * signal, aborting with a `DOMException` named `TimeoutError` once the clock passes it.
+	 */
+	public deadline?: number;
 	/** Tool execution strategy for assistant messages that contain multiple tool calls. */
 	public toolExecution: ToolExecutionMode;
 
@@ -250,6 +261,7 @@ export class Agent {
 		this.thinkingBudgets = runtimeOptions.thinkingBudgets;
 		this.transport = runtimeOptions.transport ?? "auto";
 		this.maxRetryDelayMs = runtimeOptions.maxRetryDelayMs;
+		this.deadline = runtimeOptions.deadline;
 		this.toolExecution = runtimeOptions.toolExecution ?? "parallel";
 	}
 
@@ -510,6 +522,20 @@ export class Agent {
 		}
 
 		const abortController = new AbortController();
+		// Fold the wall-clock deadline into the run's abort controller. Folding keeps a single
+		// signal for executor, hooks, and subscribers; the first abort wins, so an external
+		// abort() and the deadline merge the same way AbortSignal.any does.
+		if (this.deadline !== undefined) {
+			const delay = this.deadline - Date.now();
+			if (delay <= 0) {
+				abortController.abort(new DOMException("Deadline exceeded", "TimeoutError"));
+			} else {
+				const deadlineSignal = AbortSignal.timeout(delay);
+				deadlineSignal.addEventListener("abort", () => abortController.abort(deadlineSignal.reason), {
+					once: true,
+				});
+			}
+		}
 		let resolvePromise = () => {};
 		const promise = new Promise<void>((resolve) => {
 			resolvePromise = resolve;

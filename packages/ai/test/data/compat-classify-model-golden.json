@@ -1,0 +1,372 @@
+{
+  "classify": [
+    {
+      "provider": "anthropic",
+      "modelId": "claude-opus-4-6",
+      "strict": {
+        "class": "anthropic",
+        "family": "opus",
+        "revision": "4.6.0"
+      },
+      "lenient": {
+        "class": "anthropic",
+        "family": "opus",
+        "revision": "4.6.0"
+      }
+    },
+    {
+      "provider": "openrouter",
+      "modelId": "anthropic/claude-opus-4-6",
+      "strict": {
+        "class": "anthropic",
+        "family": "opus",
+        "revision": "4.6.0"
+      },
+      "lenient": {
+        "class": "anthropic",
+        "family": "opus",
+        "revision": "4.6.0"
+      }
+    },
+    {
+      "provider": "litellm",
+      "modelId": "mistral.mixtral-8x7b-instruct-v0:1",
+      "strict": {
+        "class": "mistral",
+        "family": "mixtral"
+      },
+      "lenient": {
+        "class": "mistral",
+        "family": "mixtral"
+      }
+    },
+    {
+      "provider": "litellm",
+      "modelId": "mistral.mistral-large-2402-v1:0",
+      "strict": {
+        "class": "mistral",
+        "family": "mistral"
+      },
+      "lenient": {
+        "class": "mistral",
+        "family": "mistral"
+      }
+    },
+    {
+      "provider": "openai",
+      "modelId": "o3",
+      "strict": {
+        "class": "openai",
+        "family": "o-series"
+      },
+      "lenient": {
+        "class": "openai",
+        "family": "o-series"
+      }
+    },
+    {
+      "provider": "openai",
+      "modelId": "o3-mini",
+      "strict": {
+        "class": "openai",
+        "family": "o-series",
+        "revision": "3.0.0"
+      },
+      "lenient": {
+        "class": "openai",
+        "family": "o-series",
+        "revision": "3.0.0"
+      }
+    },
+    {
+      "provider": "test",
+      "modelId": "anthropicology",
+      "strict": {
+        "class": "unknown"
+      },
+      "lenient": {
+        "class": "unknown"
+      }
+    },
+    {
+      "provider": "test",
+      "modelId": "deepseeker",
+      "strict": {
+        "class": "unknown"
+      },
+      "lenient": {
+        "class": "unknown"
+      }
+    },
+    {
+      "provider": "openai",
+      "modelId": "gpt-oss-120b",
+      "strict": {
+        "class": "gpt-oss",
+        "family": "120b"
+      },
+      "lenient": {
+        "class": "gpt-oss",
+        "family": "120b"
+      }
+    },
+    {
+      "provider": "mistral",
+      "modelId": "zai-glm-5-2",
+      "strict": {
+        "class": "glm",
+        "revision": "5.2.0"
+      },
+      "lenient": {
+        "class": "glm",
+        "revision": "5.2.0"
+      }
+    },
+    {
+      "provider": "cerebras",
+      "modelId": "zai-glm-4.7",
+      "strict": {
+        "class": "glm",
+        "revision": "4.7.0"
+      },
+      "lenient": {
+        "class": "glm",
+        "revision": "4.7.0"
+      }
+    },
+    {
+      "provider": "vercel-ai-gateway",
+      "modelId": "glm-4.6-thinking",
+      "strict": {
+        "class": "glm",
+        "revision": "4.6.0",
+        "thinkingVariant": true,
+        "logicalId": "glm-4.6"
+      },
+      "lenient": {
+        "class": "glm",
+        "revision": "4.6.0",
+        "thinkingVariant": true,
+        "logicalId": "glm-4.6"
+      }
+    },
+    {
+      "provider": "alibaba-token-plan",
+      "modelId": "qwen3.6-max",
+      "strict": {
+        "class": "qwen",
+        "revision": "3.6.0"
+      },
+      "lenient": {
+        "class": "qwen",
+        "revision": "3.6.0"
+      }
+    },
+    {
+      "provider": "openai",
+      "modelId": "daybreak-blue-latest",
+      "strict": {
+        "class": "unknown",
+        "revision": "5.6.0"
+      },
+      "lenient": {
+        "class": "unknown",
+        "revision": "5.6.0"
+      }
+    },
+    {
+      "provider": "openai",
+      "modelId": "gpt-daybreak-blue-latest",
+      "strict": {
+        "class": "openai",
+        "family": "gpt",
+        "revision": "5.6.0"
+      },
+      "lenient": {
+        "class": "openai",
+        "family": "gpt",
+        "revision": "5.6.0"
+      }
+    },
+    {
+      "provider": "kilo",
+      "modelId": "qwq-32b",
+      "strict": {
+        "class": "qwen",
+        "family": "qwq",
+        "logicalId": "qwen/qwq-32b"
+      },
+      "lenient": {
+        "class": "qwen",
+        "family": "qwq",
+        "logicalId": "qwen/qwq-32b"
+      }
+    },
+    {
+      "provider": "custom-local",
+      "modelId": "Bonsai-27B",
+      "strict": {
+        "class": "qwen",
+        "revision": "3.6.0"
+      },
+      "lenient": {
+        "class": "qwen",
+        "revision": "3.6.0"
+      }
+    },
+    {
+      "provider": "custom-local",
+      "modelId": "PrismML/Ternary-Bonsai-27B-q2_0",
+      "strict": {
+        "class": "qwen",
+        "revision": "3.6.0"
+      },
+      "lenient": {
+        "class": "qwen",
+        "revision": "3.6.0"
+      }
+    },
+    {
+      "provider": "custom-local",
+      "modelId": "local/prefix-Ternary-BONSAI-2-27B-Q5_K_S.gguf",
+      "strict": {
+        "class": "qwen",
+        "revision": "3.8.0"
+      },
+      "lenient": {
+        "class": "qwen",
+        "revision": "3.8.0"
+      }
+    },
+    {
+      "provider": "llama.cpp",
+      "modelId": "bonsai-270b",
+      "strict": {
+        "class": "unknown"
+      },
+      "lenient": {
+        "class": "unknown"
+      }
+    },
+    {
+      "provider": "llama.cpp",
+      "modelId": "bonsai-2-270b",
+      "strict": {
+        "class": "unknown"
+      },
+      "lenient": {
+        "class": "unknown"
+      }
+    },
+    {
+      "provider": "llama.cpp",
+      "modelId": "ternary-bonsai-270b-q4_k_m.gguf",
+      "strict": {
+        "class": "unknown"
+      },
+      "lenient": {
+        "class": "unknown"
+      }
+    },
+    {
+      "provider": "llama.cpp",
+      "modelId": "namespace/bonsai-7b",
+      "strict": {
+        "class": "unknown"
+      },
+      "lenient": {
+        "class": "unknown"
+      }
+    },
+    {
+      "provider": "amazon-bedrock",
+      "modelId": "us.xai.grok-4.6",
+      "strict": {
+        "class": "xai",
+        "family": "grok",
+        "revision": "4.6.0"
+      },
+      "lenient": {
+        "class": "xai",
+        "family": "grok",
+        "revision": "4.6.0"
+      }
+    },
+    {
+      "provider": "amazon-bedrock",
+      "modelId": "global.xai.grok-4.6",
+      "strict": {
+        "class": "xai",
+        "family": "grok",
+        "revision": "4.6.0"
+      },
+      "lenient": {
+        "class": "xai",
+        "family": "grok",
+        "revision": "4.6.0"
+      }
+    },
+    {
+      "provider": "amazon-bedrock",
+      "modelId": "xai.grok-4.6",
+      "strict": {
+        "class": "xai",
+        "family": "grok",
+        "revision": "4.6.0"
+      },
+      "lenient": {
+        "class": "xai",
+        "family": "grok",
+        "revision": "4.6.0"
+      }
+    }
+  ],
+  "routingVariantPlain": [
+    {
+      "provider": "openai-codex",
+      "model": "gpt-5.6-luna-wm",
+      "out": "gpt-5.6-luna"
+    },
+    {
+      "provider": "openai",
+      "model": "gpt-5.6-luna-wm",
+      "out": null
+    }
+  ],
+  "billingVariantPlain": [
+    {
+      "model": "gpt-5.5-pro-free",
+      "out": "gpt-5.5-pro"
+    },
+    {
+      "model": "-free",
+      "out": null
+    }
+  ],
+  "collapseVariantId": [
+    {
+      "provider": "openai",
+      "model": "gpt-5.2-codex-xhigh",
+      "out": {
+        "logicalId": "gpt-5.2-codex",
+        "thinkingVariant": false,
+        "effort": "xhigh"
+      }
+    }
+  ],
+  "strictThrows": [
+    {
+      "provider": "deepseek",
+      "modelId": "deepseek-r1-deepseek-v4",
+      "strict": {
+        "error": "AmbiguousIdentityError",
+        "message": "ambiguous family for `deepseek-r1-deepseek-v4`: `r1` and `v4` tie"
+      },
+      "lenient": {
+        "out": {
+          "class": "deepseek"
+        }
+      }
+    }
+  ]
+}
