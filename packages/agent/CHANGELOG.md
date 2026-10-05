@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added the `deadline` agent option: an absolute wall-clock deadline in Unix epoch milliseconds. Each run folds it into its abort signal and aborts with a `DOMException` named `TimeoutError` once the clock passes it.
+
 ## [1.0.0] - 2026-10-01
 
 ### Breaking Changes

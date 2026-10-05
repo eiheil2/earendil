@@ -6,6 +6,7 @@
 
 - Added the `nebius` built-in provider (OpenAI-compatible chat catalog from models.dev, authenticated via `NEBIUS_API_KEY`).
 - Added the optional model-kind axis: `KnownModelKind`/`ModelKind` types, `BaseModel.kind`, and the `isModelKind()` guard. Existing catalog entries stay unclassified; a missing `kind` means unclassified.
+- Added `classifyModel()` (`src/compat/classify-model.ts`), a port of the OMP model-identity taxonomy algorithm with the compiled `rules.json` fact base copied into `src/compat/`, classifying wire model ids into `(class, family, revision, effort, ...)` identities.
 
 ### Changed
 

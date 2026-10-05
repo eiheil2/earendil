@@ -4,13 +4,23 @@
 
 ### Added
 
+- Added an extension contract envelope to the `pi` block of `package.json`: `apiVersion`, `minHostVersion`, `capabilities`, and `experimental`. An extension declaring an `apiVersion` the host does not implement is rejected and reported in `errors[]`, while the other extensions in the same batch keep loading; an unsatisfied `minHostVersion` or a capability declaration that disagrees with what the extension registered is reported in `warnings[]` and loads anyway. Extensions that declare no envelope load exactly as before.
+- Added `--strict-capabilities` to turn the capability mismatch warning into a rejection, for CI runs.
 - Added a copy key (`app.message.copy`, default `ctrl+x`) to OAuth sign-in screens in `/login`, `/mcp`, and `/mcp login`, which copies the sign-in URL when the browser cannot be opened or the wrapped link cannot be selected.
 - Added `nebius` to the built-in provider defaults (`openai/gpt-oss-120b`) so the provider is discoverable without an explicit `--model`.
+- Added a first-run setup flow for new installs: a startup splash (any key skips it, `showStartupSplash: false` turns it off) followed by a wizard that sets up credentials (OAuth sign-in, an API key, a local or self-hosted OpenAI-compatible endpoint, or "Set up later") and picks a default model, then the existing appearance setup. Each scene is recorded as it is answered, so backing out resumes where it stopped on the next launch; the wizard is skipped entirely when there is no TTY, when resuming a session with `--continue`/`--resume`, or when `PI_SKIP_SETUP` is set.
+- Added a first-screen notice in interactive mode when no credentials are configured, naming `/login` and the local docs paths, instead of waiting for the first prompt to fail.
+- Added context window, image support, and billing annotations to model choices, and made the session footer and the first assistant message of a render pass always name the model as `provider/model`.
+
+### Changed
+
+- Changed the "Falling back to: provider/model" line printed when a session's model cannot be restored to name the reason ("model no longer exists" or "no auth configured") next to the model that will be used instead.
 
 ### Fixed
 
 - Fixed the shrinkwrap shipping vulnerable `brace-expansion` 5.0.9 by pinning `brace-expansion` 5.0.12 as a direct dependency (GHSA-q2hr-2g5m-vwhr, GHSA-qhr7-859c-m2p7, GHSA-6j4f-fj2g-mc7p) ([#10288](https://github.com/earendil-works/pi/issues/10288))
 - Fixed a trailing comma in `--models` adding an extra model to the model cycle ([#10334](https://github.com/earendil-works/pi/issues/10334))
+- Fixed the MCP server conflict errors naming only the server, without saying which extension is asking for the name that is already taken or which extension holds the conflicting name.
 
 ## [1.0.0] - 2026-10-01
 
