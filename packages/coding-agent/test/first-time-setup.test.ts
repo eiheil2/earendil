@@ -33,14 +33,15 @@ describe("shouldRunFirstTimeSetup", () => {
 		}
 	});
 
-	it("returns true when experimental, default agent dir, and no settings.json", () => {
+	it("returns true by default with a default agent dir and no settings.json (AC-B01)", () => {
 		expect(shouldRunFirstTimeSetup(settingsPath)).toBe(true);
 	});
 
-	it("returns false when experimental features are disabled", () => {
+	it("returns true even when experimental features are disabled (AC-B01)", () => {
+		// AC-B01 mandates this: the wizard must not sit behind PI_EXPERIMENTAL.
 		delete process.env.PI_EXPERIMENTAL;
 
-		expect(shouldRunFirstTimeSetup(settingsPath)).toBe(false);
+		expect(shouldRunFirstTimeSetup(settingsPath)).toBe(true);
 	});
 
 	it("returns false when a custom agent dir is set", () => {

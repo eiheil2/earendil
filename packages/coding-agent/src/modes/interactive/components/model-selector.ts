@@ -9,7 +9,9 @@ import {
 	Text,
 	type TUI,
 } from "@earendil-works/pi-tui";
+import { formatNoModelsAvailableMessage } from "../../../core/auth-guidance.ts";
 import type { ModelRuntime } from "../../../core/model-runtime.ts";
+import { formatModelCandidateMeta, isSubscriptionBackedProvider } from "../model-candidate-meta.ts";
 import { refreshModelCatalogs } from "../model-catalog-refresh.ts";
 import { getModelSelectorSearchText } from "../model-search.ts";
 import { theme } from "../theme/theme.ts";
@@ -326,7 +328,13 @@ export class ModelSelectorComponent extends Container implements Focusable {
 			const currentMarker = isCurrent ? theme.fg("accent", "✓ ") : "  ";
 			const modelText = isSelected ? theme.fg("accent", item.id) : item.id;
 			const providerBadge = theme.fg("muted", `[${item.provider}]`);
-			const line = `${cursor}${currentMarker}${modelText} ${providerBadge}${defaultBadge}`;
+			const meta = theme.fg(
+				"muted",
+				` · ${formatModelCandidateMeta(item.model, {
+					subscription: isSubscriptionBackedProvider(this.modelRuntime, item.provider),
+				})}`,
+			);
+			const line = `${cursor}${currentMarker}${modelText} ${providerBadge}${meta}${defaultBadge}`;
 
 			this.listContainer.addChild(new Text(line, 0, 0));
 		}
@@ -345,7 +353,14 @@ export class ModelSelectorComponent extends Container implements Focusable {
 				this.listContainer.addChild(new Text(theme.fg("error", line), 0, 0));
 			}
 		} else if (this.filteredModels.length === 0) {
-			this.listContainer.addChild(new Text(theme.fg("muted", "  No matching models"), 0, 0));
+			// No credential-backed models at all: guide to /login instead of a dead end (AC-C05).
+			if (this.activeModels.length === 0) {
+				for (const guidanceLine of formatNoModelsAvailableMessage().split("\n")) {
+					this.listContainer.addChild(new Text(theme.fg("muted", `  ${guidanceLine}`), 0, 0));
+				}
+			} else {
+				this.listContainer.addChild(new Text(theme.fg("muted", "  No matching models"), 0, 0));
+			}
 		} else {
 			const selected = this.filteredModels[this.selectedIndex];
 			this.listContainer.addChild(new Spacer(1));

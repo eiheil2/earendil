@@ -244,14 +244,10 @@ export class FooterComponent implements Component {
 			rightSideWithoutProvider += ` → ${routed.model.id}${level}`;
 		}
 
-		// Prepend the provider in parentheses if there are multiple providers and there's enough room
-		let rightSide = rightSideWithoutProvider;
-		if (this.footerData.getAvailableProviderCount() > 1 && state.model) {
-			rightSide = `(${state.model!.provider}) ${rightSideWithoutProvider}`;
-			if (statsLeftWidth + minPadding + visibleWidth(rightSide) > width) {
-				// Too wide, fall back
-				rightSide = rightSideWithoutProvider;
-			}
+		// Show the model as provider/model; fall back to the bare id when the line is too wide.
+		let rightSide = state.model ? `${state.model.provider}/${rightSideWithoutProvider}` : rightSideWithoutProvider;
+		if (state.model && statsLeftWidth + minPadding + visibleWidth(rightSide) > width) {
+			rightSide = rightSideWithoutProvider;
 		}
 
 		const rightSideWidth = visibleWidth(rightSide);

@@ -67,6 +67,7 @@ import {
 import { type AgentSession, type AgentSessionEvent, parseSkillBlock } from "../../core/agent-session.ts";
 import { type AgentSessionRuntime, SessionImportFileNotFoundError } from "../../core/agent-session-runtime.ts";
 import type { AgentSessionRuntimeDiagnostic } from "../../core/agent-session-services.ts";
+import { getProviderLoginHelp } from "../../core/auth-guidance.ts";
 import {
 	CACHE_TTL_MS,
 	type CacheMiss,
@@ -180,6 +181,7 @@ import { TrustSelectorComponent } from "./components/trust-selector.ts";
 import { UserMessageComponent } from "./components/user-message.ts";
 import { UserMessageSelectorComponent } from "./components/user-message-selector.ts";
 import { editInExternalEditor } from "./external-editor.ts";
+import { buildLoginProviderOptions } from "./login-providers.ts";
 import { refreshModelCatalogs } from "./model-catalog-refresh.ts";
 import { getModelSearchText } from "./model-search.ts";
 import { shareSession } from "./session-share.ts";
@@ -499,6 +501,8 @@ export class InteractiveMode {
 	private streamingComponent: AssistantMessageComponent | undefined = undefined;
 	private readonly entriesRenderedByBoundaryCompaction = new Set<string>();
 	private streamingMessage: AssistantMessage | undefined = undefined;
+	/** Whether the `provider/model` identity line already precedes an assistant message (AC-C06). */
+	private identityAnnounced = false;
 
 	// Tool execution tracking: toolCallId -> component
 	private pendingTools = new Map<string, ToolExecutionComponent>();
@@ -3445,6 +3449,7 @@ export class InteractiveMode {
 					this.updatePendingMessagesDisplay();
 					this.ui.requestRender();
 				} else if (event.message.role === "assistant") {
+					this.announceModelIdentity(event.message);
 					this.streamingComponent = new AssistantMessageComponent(
 						undefined,
 						this.hideThinkingBlock,
@@ -3889,6 +3894,7 @@ export class InteractiveMode {
 				break;
 			}
 			case "assistant": {
+				this.announceModelIdentity(message);
 				const assistantComponent = new AssistantMessageComponent(
 					message,
 					this.hideThinkingBlock,
@@ -3915,6 +3921,8 @@ export class InteractiveMode {
 		options: { updateFooter?: boolean; populateHistory?: boolean } = {},
 	): void {
 		this.pendingTools.clear();
+		// A pass rebuilds the chat, so the identity line may be emitted again.
+		this.identityAnnounced = false;
 		const renderedPendingTools = new Map<string, ToolExecutionComponent>();
 		// Cache misses are not persisted, unlike successful cache-warming usage.
 		// Re-derive them and inject them after the assistant messages that paid for them.
@@ -4131,6 +4139,7 @@ export class InteractiveMode {
 			populateHistory: true,
 		});
 		this.renderProjectTrustWarningIfNeeded();
+		this.renderNoCredentialsWarningIfNeeded();
 
 		// Show compaction info if session was compacted
 		const allEntries = this.sessionManager.getEntries();
@@ -4159,6 +4168,38 @@ export class InteractiveMode {
 				1,
 				0,
 			),
+		);
+	}
+
+	/**
+	 * Proactive empty state for missing credentials (AC-C01): shown with the first render,
+	 * before the user submits a task, mirroring the project trust warning's card shape.
+	 */
+	private renderNoCredentialsWarningIfNeeded(): void {
+		const model = this.session.model;
+		if (model && this.session.modelRuntime.hasConfiguredAuth(model.provider)) {
+			return;
+		}
+
+		if (this.chatContainer.children.length > 0) {
+			this.chatContainer.addChild(new Spacer(1));
+		}
+		this.chatContainer.addChild(
+			new ThemedText(() => theme.fg("warning", `No credentials configured, so no model can answer yet.`), 1, 0),
+		);
+		this.chatContainer.addChild(new ThemedText(() => theme.fg("text", getProviderLoginHelp()), 1, 0));
+	}
+
+	/**
+	 * `provider/model` line before the first assistant message of a render pass (AC-C06).
+	 * Both history rendering and the live `message_start` branch pass through here; the
+	 * flag resets when a pass rebuilds the chat so the line stays the first of the pass.
+	 */
+	private announceModelIdentity(message: AssistantMessage): void {
+		if (this.identityAnnounced) return;
+		this.identityAnnounced = true;
+		this.chatContainer.addChild(
+			new ThemedText(() => theme.fg("muted", `Model: ${message.provider}/${message.model}`), 1, 0),
 		);
 	}
 
@@ -5707,38 +5748,7 @@ export class InteractiveMode {
 	}
 
 	private getLoginProviderOptions(authType?: "oauth" | "api_key"): AuthSelectorProvider[] {
-		const options: AuthSelectorProvider[] = [];
-		for (const provider of this.session.modelRuntime.getProviders()) {
-			const authStatus = this.session.modelRuntime.getProviderAuthStatus(provider.id);
-			const status = authStatus.configured
-				? {
-						type: this.session.modelRuntime.isUsingOAuth(provider.id) ? ("oauth" as const) : ("api_key" as const),
-						source: authStatus.label ?? authStatus.source,
-					}
-				: undefined;
-			const subscription = provider.auth.oauth?.isSubscription === true;
-			if ((!authType || authType === "oauth") && provider.auth.oauth) {
-				options.push({
-					id: provider.id,
-					name: provider.name,
-					authType: "oauth",
-					method: provider.auth.oauth,
-					status,
-					subscription,
-				});
-			}
-			if ((!authType || authType === "api_key") && provider.auth.apiKey) {
-				options.push({
-					id: provider.id,
-					name: provider.name,
-					authType: "api_key",
-					method: provider.auth.apiKey,
-					status,
-					subscription,
-				});
-			}
-		}
-		return options.sort((a, b) => a.name.localeCompare(b.name));
+		return buildLoginProviderOptions(this.session.modelRuntime, authType);
 	}
 
 	private async getLogoutProviderOptions(): Promise<AuthSelectorProvider[]> {

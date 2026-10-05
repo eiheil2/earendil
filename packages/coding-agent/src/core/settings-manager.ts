@@ -186,6 +186,9 @@ export interface Settings {
 	fullscreenScrollbar?: ScrollViewScrollbar; // default: "auto"; no effect in regular TUI mode
 	fullscreenCopyOnSelect?: boolean; // default: true; no effect in regular TUI mode
 	fullscreenWheelScrollLines?: WheelScrollLines; // default: "auto"; lines per wheel event, 1-100
+	setupVersion?: number; // setup version the wizard completed; absent means "wizard never finished"
+	setupCompletedScenes?: string[]; // scenes finished inside an unfinished wizard run; cleared on completion
+	showStartupSplash?: boolean; // default: true - startup splash before the setup scenes
 }
 
 function isMergeableObject(value: unknown): value is Record<string, unknown> {
@@ -1528,6 +1531,47 @@ export class SettingsManager {
 	setWarnings(warnings: WarningSettings): void {
 		this.globalSettings.warnings = { ...warnings };
 		this.markModified("warnings");
+		this.save();
+	}
+
+	/** Whether the startup splash runs before setup scenes. Defaults to enabled. */
+	getShowStartupSplash(): boolean {
+		return this.settings.showStartupSplash ?? true;
+	}
+
+	setShowStartupSplash(show: boolean): void {
+		this.globalSettings.showStartupSplash = show;
+		this.markModified("showStartupSplash");
+		this.save();
+	}
+
+	getSetupVersion(): number | undefined {
+		return this.settings.setupVersion;
+	}
+
+	getSetupCompletedScenes(): string[] {
+		const scenes = this.settings.setupCompletedScenes;
+		return Array.isArray(scenes) ? [...scenes] : [];
+	}
+
+	/**
+	 * Record one finished setup scene so the next launch resumes past it.
+	 * Completion stays partial until `completeSetup` stamps the version.
+	 */
+	markSetupSceneCompleted(scene: string): void {
+		const completed = this.getSetupCompletedScenes();
+		if (completed.includes(scene)) return;
+		this.globalSettings.setupCompletedScenes = [...completed, scene];
+		this.markModified("setupCompletedScenes");
+		this.save();
+	}
+
+	/** Stamp the finished setup version and drop the per-scene progress list. */
+	completeSetup(version: number): void {
+		this.globalSettings.setupVersion = version;
+		delete this.globalSettings.setupCompletedScenes;
+		this.markModified("setupVersion");
+		this.markModified("setupCompletedScenes");
 		this.save();
 	}
 }

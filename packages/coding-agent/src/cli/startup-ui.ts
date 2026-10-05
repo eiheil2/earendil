@@ -2,21 +2,17 @@ import {
 	ProcessTerminal,
 	setCapabilityOverrides,
 	setKeybindings,
+	type Terminal,
 	type TUI,
 	TuiMainScreen,
 } from "@earendil-works/pi-tui";
-import { existsSync } from "fs";
 import { APP_NAME, CONFIG_DIR_NAME, ENV_AGENT_DIR, getAgentDir, getSettingsPath, PACKAGE_NAME } from "../config.ts";
-import { areExperimentalFeaturesEnabled } from "../core/experimental.ts";
 import { KeybindingsManager } from "../core/keybindings.ts";
+import { ModelRuntime } from "../core/model-runtime.ts";
 import { DefaultPackageManager, type ResolvedResource } from "../core/package-manager.ts";
 import { SettingsManager } from "../core/settings-manager.ts";
 import { ExtensionInputComponent } from "../modes/interactive/components/extension-input.ts";
 import { ExtensionSelectorComponent } from "../modes/interactive/components/extension-selector.ts";
-import {
-	FirstTimeSetupComponent,
-	type FirstTimeSetupResult,
-} from "../modes/interactive/components/first-time-setup.ts";
 import { SYSTEM_THEME_NAME } from "../modes/interactive/theme/system-theme.ts";
 import {
 	getTerminalTheme,
@@ -30,6 +26,9 @@ import {
 	type Theme,
 } from "../modes/interactive/theme/theme.ts";
 import { requestTerminalColors } from "../modes/interactive/theme/theme-controller.ts";
+import { runSetupScene, runWelcomeOutro, type SetupSceneHost } from "./setup-scenes.ts";
+import { CURRENT_SETUP_VERSION, readSetupState, type SetupSceneDescriptor, selectSetupScenes } from "./setup-wizard.ts";
+import { runStartupSplash, shouldShowStartupSplash } from "./startup-splash.ts";
 
 const OFFICIAL_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
 const OFFICIAL_APP_NAME = "pi";
@@ -82,14 +81,18 @@ async function loadStartupThemes(settingsManager: SettingsManager): Promise<Them
 	return loadThemes(resolvedPaths.themes);
 }
 
-export async function createStartupTui(settingsManager: SettingsManager): Promise<TUI> {
+export async function createStartupTui(settingsManager: SettingsManager, terminal?: Terminal): Promise<TUI> {
 	setCapabilityOverrides(settingsManager.getTerminalCapabilityOverrides());
 	setRegisteredThemes(await loadStartupThemes(settingsManager));
 	// The system theme starts in grayscale until the terminal reports its colors.
 	markTerminalColorsPending();
 	initTheme(resolveThemeSetting(settingsManager.getThemeSetting(), getTerminalTheme()) ?? SYSTEM_THEME_NAME);
 	setKeybindings(KeybindingsManager.create());
-	const ui: TUI = new TuiMainScreen(new ProcessTerminal(), settingsManager.getShowHardwareCursor(), getAgentDir());
+	const ui: TUI = new TuiMainScreen(
+		terminal ?? new ProcessTerminal(),
+		settingsManager.getShowHardwareCursor(),
+		getAgentDir(),
+	);
 	ui.setClearOnShrink(settingsManager.getClearOnShrink());
 	return ui;
 }
@@ -124,9 +127,12 @@ async function clearStartupTui(ui: TUI): Promise<void> {
 /**
  * First-time setup runs when all of these hold:
  * - this is the official Pi distribution (not a fork/rebrand)
- * - experimental features are enabled (PI_EXPERIMENTAL=1)
  * - the default agent directory is used (no custom agent dir override)
- * - setup was not completed before (settings.json does not exist)
+ * - the install still owes setup scenes (settings.json never stamped a completed
+ *   setup version, see `readSetupState`)
+ *
+ * The scene list itself is narrower again: `selectSetupScenes` also drops scenes the
+ * user already recorded, and gates on TTY, `--continue`/`--resume`, and `PI_SKIP_SETUP`.
  */
 export function shouldRunFirstTimeSetup(settingsPath: string = getSettingsPath()): boolean {
 	if (
@@ -138,13 +144,10 @@ export function shouldRunFirstTimeSetup(settingsPath: string = getSettingsPath()
 	) {
 		return false;
 	}
-	if (!areExperimentalFeaturesEnabled()) {
-		return false;
-	}
 	if (process.env[ENV_AGENT_DIR]) {
 		return false;
 	}
-	return !existsSync(settingsPath);
+	return readSetupState(settingsPath).version < CURRENT_SETUP_VERSION;
 }
 
 export async function showStartupSelector<T>(
@@ -178,44 +181,81 @@ export async function showStartupSelector<T>(
 	});
 }
 
-/** Show the first-time setup dialog and persist the result */
-export async function showFirstTimeSetup(settingsManager: SettingsManager): Promise<void> {
-	const ui = await createStartupTui(settingsManager);
-	return new Promise((resolve) => {
-		let settled = false;
-		const finish = async (result: FirstTimeSetupResult | undefined) => {
-			if (settled) {
+/** Inputs for the startup splash → setup scenes → completion run. */
+export interface StartupOnboardingOptions {
+	readonly settingsManager: SettingsManager;
+	/** `--continue` / `--resume` returns to a session, so setup never runs. */
+	readonly resuming: boolean;
+	/** Quiet startup suppresses the splash; owed scenes still run. */
+	readonly quiet: boolean;
+	/** Benchmark timing mode: no splash, no scenes. */
+	readonly timing: boolean;
+	/** The process is launching interactive mode on a TTY. */
+	readonly interactive: boolean;
+	readonly settingsPath?: string;
+	/** Injected for tests; defaults to a process terminal. */
+	readonly terminal?: Terminal;
+	/** Injected for tests; defaults to a network-free-at-create `ModelRuntime`. */
+	readonly createModelRuntime?: () => Promise<ModelRuntime>;
+}
+
+/**
+ * Startup splash plus the owed setup scenes (AC-B02…B06), all hosted on one startup TUI.
+ *
+ * A scene that is "deferred" (the user backed out of a chooser) stops the run without
+ * stamping the setup version, so the next launch resumes it; every recorded scene is
+ * persisted immediately. Returns without touching the terminal when neither the splash
+ * nor a scene is owed, which is the non-TTY / resuming / `PI_SKIP_SETUP` path.
+ */
+export async function runStartupOnboarding(options: StartupOnboardingOptions): Promise<void> {
+	const { settingsManager } = options;
+	const settingsPath = options.settingsPath ?? getSettingsPath();
+	const scenes: SetupSceneDescriptor[] =
+		options.interactive && shouldRunFirstTimeSetup(settingsPath)
+			? selectSetupScenes(readSetupState(settingsPath), { resuming: options.resuming })
+			: [];
+	const showSplash = shouldShowStartupSplash({
+		configured: settingsManager.getShowStartupSplash(),
+		isInteractive: options.interactive,
+		resuming: options.resuming,
+		quiet: options.quiet,
+		timing: options.timing,
+		stdinIsTTY: process.stdin.isTTY,
+		stdoutIsTTY: process.stdout.isTTY,
+	});
+	if (scenes.length === 0 && !showSplash) return;
+
+	const ui = await createStartupTui(settingsManager, options.terminal);
+	startStartupTui(ui, settingsManager);
+	let modelRuntime: ModelRuntime | undefined;
+	const host: SetupSceneHost = {
+		ui,
+		settingsManager,
+		createModelRuntime: async () => {
+			modelRuntime ??= options.createModelRuntime ? await options.createModelRuntime() : await ModelRuntime.create();
+			return modelRuntime;
+		},
+	};
+
+	try {
+		if (showSplash) await runStartupSplash(ui);
+		for (const scene of scenes) {
+			if ((await runSetupScene(scene.id, host)) !== "recorded") {
+				// Backed out: keep the version unstamped so the next launch resumes here.
 				return;
 			}
-			settled = true;
-			if (result) {
-				settingsManager.setTheme(result.theme);
-				settingsManager.setEnableAnalytics(result.shareAnalytics);
-				await settingsManager.flush();
-			}
-			await clearStartupTui(ui);
-			ui.stop();
-			resolve();
-		};
-
-		ui.start();
-		let previewTheme = SYSTEM_THEME_NAME;
-		setTheme(previewTheme);
-		const component = new FirstTimeSetupComponent({
-			onThemePreview: (themeName) => {
-				previewTheme = themeName;
-				setTheme(themeName);
-				ui.requestRender();
-			},
-			onSubmit: (result) => void finish(result),
-			onCancel: () => void finish(undefined),
-		});
-		ui.addChild(component);
-		ui.setFocus(component);
-		ui.requestRender();
-		// The terminal's colors regenerate the system theme; re-rendering rebuilds the dialog with it.
-		queryStartupTerminalColors(ui, () => setTheme(previewTheme));
-	});
+			settingsManager.markSetupSceneCompleted(scene.id);
+			await settingsManager.flush();
+		}
+		if (scenes.length > 0) {
+			settingsManager.completeSetup(CURRENT_SETUP_VERSION);
+			await settingsManager.flush();
+			await runWelcomeOutro(host);
+		}
+	} finally {
+		await clearStartupTui(ui);
+		ui.stop();
+	}
 }
 
 export async function showStartupInput(

@@ -10,8 +10,16 @@ function createFakeTui(): TUI {
 	return { requestRender: () => {} } as unknown as TUI;
 }
 
+/**
+ * The harness lists every model whose provider has ambient credentials, so a developer shell with
+ * `*_API_KEY` set changes the candidate list (and therefore the row order) these tests assert on.
+ * Keys are hidden for the duration of the suite and restored afterwards.
+ */
+const CREDENTIAL_ENV_PATTERN = /(API_?KEY|TOKEN|OAUTH|CREDENTIAL|SECRET|PASSWORD)/i;
+
 describe("model selector", () => {
 	let harness: Harness | undefined;
+	let savedCredentialEnv: Record<string, string>;
 
 	beforeAll(() => {
 		initTheme("dark");
@@ -19,11 +27,19 @@ describe("model selector", () => {
 
 	beforeEach(() => {
 		setKeybindings(new KeybindingsManager());
+		savedCredentialEnv = {};
+		for (const [key, value] of Object.entries(process.env)) {
+			if (value !== undefined && CREDENTIAL_ENV_PATTERN.test(key)) {
+				savedCredentialEnv[key] = value;
+				delete process.env[key];
+			}
+		}
 	});
 
 	afterEach(() => {
 		harness?.cleanup();
 		harness = undefined;
+		for (const [key, value] of Object.entries(savedCredentialEnv)) process.env[key] = value;
 	});
 
 	it("keeps the current model marked while browsing", async () => {
@@ -49,10 +65,19 @@ describe("model selector", () => {
 				.find((line) => line.includes(`${id} [`))
 				?.trimEnd();
 
-		expect(getModelRow("current-model")).toBe(`→ ✓ current-model [${currentModel.provider}]`);
+		// Every row now ends with its context/image/billing annotation (AC-C05), so the marker
+		// assertions compare the row without that suffix instead of the whole line.
+		const annotation = / · \d+[kM]? ctx · (?:images|text only) · \S+$/;
+		const expectRow = (id: string, marker: string): void => {
+			const row = getModelRow(id) ?? "";
+			expect(row).toMatch(annotation);
+			expect(row.replace(annotation, "")).toBe(marker);
+		};
+
+		expectRow("current-model", `→ ✓ current-model [${currentModel.provider}]`);
 		selector.handleInput("\x1b[B");
-		expect(getModelRow("current-model")).toBe(`  ✓ current-model [${currentModel.provider}]`);
-		expect(getModelRow("browsed-model")).toBe(`→   browsed-model [${currentModel.provider}]`);
+		expectRow("current-model", `  ✓ current-model [${currentModel.provider}]`);
+		expectRow("browsed-model", `→   browsed-model [${currentModel.provider}]`);
 		selector.dispose();
 	});
 

@@ -211,7 +211,8 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			model = restoredModel;
 		}
 		if (!model) {
-			modelFallbackMessage = `Could not restore model ${sessionModel.provider}/${sessionModel.modelId}`;
+			const reason = restoredModel ? "no auth configured" : "model no longer exists";
+			modelFallbackMessage = `Could not restore model ${sessionModel.provider}/${sessionModel.modelId} (${reason})`;
 		}
 	}
 

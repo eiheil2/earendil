@@ -21,8 +21,12 @@ type LockResult<T> = {
 	next?: string;
 };
 
+/** Owner-only modes for the credential file and its directory; surfaces disclose them to the user. */
+export const AUTH_FILE_MODE = 0o600;
+export const AUTH_DIR_MODE = 0o700;
+
 // The mode applies only on creation so administrator-managed modes and ACLs remain intact.
-const AUTH_FILE_WRITE_OPTIONS = { encoding: "utf-8", mode: 0o600 } as const;
+const AUTH_FILE_WRITE_OPTIONS = { encoding: "utf-8", mode: AUTH_FILE_MODE } as const;
 
 type AuthFileReload = {
 	controller: AbortController;
@@ -56,7 +60,7 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 	private ensureParentDir(): void {
 		const dir = dirname(this.authPath);
 		if (!existsSync(dir)) {
-			mkdirSync(dir, { recursive: true, mode: 0o700 });
+			mkdirSync(dir, { recursive: true, mode: AUTH_DIR_MODE });
 		}
 	}
 
