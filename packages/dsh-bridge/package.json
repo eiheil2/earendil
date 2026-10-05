@@ -1,0 +1,21 @@
+{
+  "name": "@earendil-works/dsh-bridge",
+  "description": "Minimal Cordis-to-pi bridge: duck-typed Context proxy + event/service adapters for one Cordis-style plugin",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    "./src/cordis-context.ts": "./src/cordis-context.ts",
+    "./src/llm-adapter.ts": "./src/llm-adapter.ts",
+    "./src/agent-events.ts": "./src/agent-events.ts",
+    "./src/session-log.ts": "./src/session-log.ts",
+    "./src/index.ts": "./src/index.ts",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src/"
+  ],
+  "license": "MIT",
+  "peerDependencies": {},
+  "dependencies": {}
+}
