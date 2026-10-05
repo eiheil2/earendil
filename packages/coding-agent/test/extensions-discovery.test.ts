@@ -51,14 +51,26 @@ describe("extensions discovery", () => {
 		expect(result.extensions.map((e) => path.basename(e.path)).sort()).toEqual(["bar.ts", "foo.ts"]);
 	});
 
-	it("loads the coding-agent entrypoint without rewriting pi-ai provider subpaths", async () => {
+	it("loads an allowlisted package import without rewriting pi-ai provider subpaths", async () => {
+		// This test used to import "@earendil-works/pi-coding-agent" and assert that the extension
+		// loaded, which pinned "an extension may import pi internals" as expected behavior. That is now
+		// a commit-time failure (scripts/check-plugin-boundary.mjs, rule R-B1). The import below is on the
+		// allowlist, and what the test still covers is unchanged: an extension importing a bare package
+		// specifier loads, and jiti keeps mapping the pi-ai subpaths where it did before (the sibling test
+		// below pins the oauth barrel specifically). An extension imports the contract package as a
+		// declared dependency, resolved from its own node_modules; the compatibility fixtures cover that.
 		fs.writeFileSync(
-			path.join(extensionsDir, "coding-agent-import.ts"),
+			path.join(extensionsDir, "typebox-import.ts"),
 			`
-				import { getAgentDir } from "@earendil-works/pi-coding-agent";
-				void getAgentDir;
+				import { Type } from "typebox";
 				export default function(pi) {
-					pi.registerCommand("test", { handler: async () => {} });
+					pi.registerTool({
+						name: "test",
+						label: "test",
+						description: "Test tool",
+						parameters: Type.Object({}),
+						execute: async () => ({ content: [{ type: "text", text: "ok" }] }),
+					});
 				}
 			`,
 		);

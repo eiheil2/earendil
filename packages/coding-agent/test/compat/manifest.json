@@ -1,0 +1,69 @@
+{
+	"//": "The compatibility fixture index: which fixtures the matrix loads and what each one is for. Layer values are Kimi's four layers (1 skills, 2 hooks, 3 mcp, 4 plugins) from plan-plugin-contract.md section 1.1.4; pi has the first three natively, which is why the fixtures spread across all four.",
+	"pluginApiVersion": "1",
+	"fixtures": [
+		{
+			"name": "exhaustive-switch",
+			"apiVersion": "1",
+			"layer": 2,
+			"expectWarnings": [],
+			"note": "R8 pin, positive case: an exhaustive switch over the event union with no default branch. Must stop compiling when an event is added. Its sibling is the control."
+		},
+		{
+			"name": "exhaustive-switch-with-default",
+			"apiVersion": "1",
+			"layer": 2,
+			"expectWarnings": [],
+			"note": "R8 pin, control case: the same switch with a default branch. Must keep compiling when an event is added, so the pin does not obstruct additive evolution."
+		},
+		{
+			"name": "tool-register",
+			"apiVersion": "1",
+			"layer": 4,
+			"expectWarnings": [],
+			"note": "registerTool with a typebox schema: covers tool.register and the typebox allowlist entry"
+		},
+		{
+			"name": "events-only",
+			"apiVersion": "1",
+			"layer": 2,
+			"expectWarnings": [],
+			"note": "subscribes to four events and returns a result for two of them: covers event.subscribe"
+		},
+		{
+			"name": "provider-oauth",
+			"apiVersion": "1",
+			"layer": 4,
+			"expectWarnings": [],
+			"note": "registerProvider with an oauth block, including the deprecated usesCallbackServer"
+		},
+		{
+			"name": "mcp-server",
+			"apiVersion": "1",
+			"layer": 3,
+			"expectWarnings": [],
+			"note": "registerMcpServer with an http transport: covers the mcp.register capability"
+		},
+		{
+			"name": "manifest-unknown-fields",
+			"apiVersion": "1",
+			"layer": 1,
+			"expectWarnings": [],
+			"note": "a manifest with unknown keys: unknown fields must be ignored silently, never warned about"
+		},
+		{
+			"name": "min-host-version",
+			"apiVersion": "1",
+			"layer": 1,
+			"expectWarnings": ["requires host"],
+			"note": "minHostVersion this host does not satisfy: must warn and still load"
+		},
+		{
+			"name": "legacy-no-manifest",
+			"apiVersion": "0",
+			"layer": 4,
+			"expectWarnings": [],
+			"note": "no pi block at all: the legacy tier, which must load without a warning on every host"
+		}
+	]
+}

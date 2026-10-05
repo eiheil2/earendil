@@ -1,0 +1,9 @@
+{
+	"apiVersion": "0",
+	"hostVersionAtCreation": "1.0.0",
+	"createdAt": "2026-10-03",
+	"layer": 4,
+	"source": "synthetic",
+	"sha256": "333041d954785d22e0b4f5941033e6506250772306883672d43cba52fffd7ee1",
+	"note": "The legacy tier: no pi block, no SDK import. Must keep loading silently forever, including on hosts implementing a later PLUGIN_API_VERSION. This is the fixture that catches a change making the contract mandatory."
+}

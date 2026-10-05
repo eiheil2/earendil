@@ -1,0 +1,9 @@
+{
+	"apiVersion": "1",
+	"hostVersionAtCreation": "1.0.0",
+	"createdAt": "2026-10-03",
+	"layer": 2,
+	"source": "synthetic",
+	"sha256": "03043a73cfeca62f971e11dfcc6e11222e92226db1d7950404eb646532bf9fd2",
+	"note": "The smallest useful plugin: four event subscriptions and no registrations, so its whole recorded surface comes from on(). Two of the four return a result. Synthetic until a version-1 plugin is published."
+}

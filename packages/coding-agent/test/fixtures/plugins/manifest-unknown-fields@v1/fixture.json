@@ -1,0 +1,9 @@
+{
+	"apiVersion": "1",
+	"hostVersionAtCreation": "1.0.0",
+	"createdAt": "2026-10-03",
+	"layer": 1,
+	"source": "synthetic",
+	"sha256": "e49a203038faab1de1eb7397b25ec67c3cebf961652faeeae2b4b208b11ca2fa",
+	"note": "Pins E4: unknown manifest keys are ignored silently. Five unknown keys, two known ones, and a command registration so an empty recorded surface cannot mask a load failure."
+}

@@ -8,26 +8,61 @@
  * measures a process. This walks the value-import graph of every declared entry point and enforces a
  * budget per entry, so that regression fails at commit time instead.
  *
- * Only value imports count. `import type` / `export type` are erased before Node sees them.
+ * Only value imports count, so a budget is about what a consumer evaluates at runtime. A budget that
+ * guards a source-level boundary (the plugin SDK must not carry host types) sets
+ * `includeTypeImports: true` and is walked with type-only imports included as well.
  */
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { dirname, relative, resolve } from "node:path";
+import { dirname, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
-/** Workspace package name -> its source root, so cross-package imports are followed. */
+/**
+ * Workspace package name -> its source root, so cross-package imports are followed.
+ *
+ * Every workspace package belongs here. A `@earendil-works/*` specifier that is missing from this
+ * table used to be treated as an external dependency and skipped silently, which made the `forbid`
+ * patterns of a budget unenforceable for exactly the packages the boundary cares about.
+ */
 const WORKSPACE = {
 	"@earendil-works/chord": "packages/chord/src",
 	"@earendil-works/pi-ai": "packages/ai/src",
+	"@earendil-works/pi-client": "packages/client/src",
+	"@earendil-works/pi-codemode": "packages/codemode/src",
+	"@earendil-works/pi-coding-agent": "packages/coding-agent/src",
 	"@earendil-works/pi-durable": "packages/durable/src",
 	"@earendil-works/pi-agent-core": "packages/agent/src",
-	"@earendil-works/pi-codemode": "packages/codemode/src",
-	"@earendil-works/pi-telemetry": "packages/telemetry/src",
 	"@earendil-works/pi-mcp": "packages/mcp/src",
+	"@earendil-works/pi-plugin-sdk": "packages/plugin-sdk/src",
+	"@earendil-works/pi-protocol": "packages/protocol/src",
+	"@earendil-works/pi-server": "packages/server/src",
+	"@earendil-works/pi-telemetry": "packages/telemetry/src",
 	"@earendil-works/pi-tui": "packages/tui/src",
 };
+
+/**
+ * Source roots the plugin SDK must not reach, at all.
+ *
+ * The SDK declares the extension contract; it must not carry host implementation types into it.
+ * Copying `ExtensionAPI`'s payload types would move the coupling from the extension side into the SDK
+ * instead of removing it, so the whole host tree is forbidden rather than one entry.
+ */
+const HOST_SOURCES = [
+	"packages/agent/src",
+	"packages/ai/src",
+	"packages/chord/src",
+	"packages/client/src",
+	"packages/codemode/src",
+	"packages/coding-agent/src",
+	"packages/durable/src",
+	"packages/mcp/src",
+	"packages/protocol/src",
+	"packages/server/src",
+	"packages/telemetry/src",
+	"packages/tui/src",
+];
 
 /**
  * Budgets are deliberate. Entries with no budget remain unbounded; each listed entry states the
@@ -48,9 +83,22 @@ const BUDGETS = {
 			forbid: ["packages/ai/src/index.ts", "packages/ai/src/utils/typebox-helpers.ts"],
 		},
 	},
+	"packages/plugin-sdk": {
+		".": { maxFiles: 10, forbid: HOST_SOURCES, includeTypeImports: true },
+		"./api": { maxFiles: 4, forbid: HOST_SOURCES, includeTypeImports: true },
+		"./capabilities": { maxFiles: 2, forbid: HOST_SOURCES, includeTypeImports: true },
+		"./compat": { maxFiles: 4, forbid: HOST_SOURCES, includeTypeImports: true },
+		"./events": { maxFiles: 2, forbid: HOST_SOURCES, includeTypeImports: true },
+		"./manifest": { maxFiles: 4, forbid: HOST_SOURCES, includeTypeImports: true },
+		"./version": { maxFiles: 2, forbid: HOST_SOURCES, includeTypeImports: true },
+	},
 };
 
 const SPEC = /(?:^|\n)\s*(?:import|export)\s+(?!type\s)([^;]*?\sfrom\s*)?["']([^"']+)["']/g;
+/** Same as SPEC, but type-only imports count. A budget opts in with `includeTypeImports`. */
+const SPEC_WITH_TYPES = /(?:^|\n)\s*(?:import|export)\s+(?:type\s+)?([^;]*?\sfrom\s*)?["']([^"']+)["']/g;
+
+const unregistered = new Set();
 
 function resolveSpec(spec, fromFile) {
 	if (spec.startsWith("node:")) return null;
@@ -70,17 +118,24 @@ function resolveSpec(spec, fromFile) {
 			if (existsSync(file) && statSync(file).isFile()) return file;
 		}
 	}
+	// Fail closed: an unknown `@earendil-works/*` is a workspace package that nobody registered, so
+	// it would silently drop out of every graph and quietly disable the budgets that forbid it.
+	if (spec.startsWith("@earendil-works/")) {
+		unregistered.add(spec);
+		return null;
+	}
 	return null; // external dependency: not part of the workspace graph
 }
 
-function walk(entryFile) {
+function walk(entryFile, includeTypeImports = false) {
+	const spec = includeTypeImports ? SPEC_WITH_TYPES : SPEC;
 	const seen = new Set();
 	const queue = [entryFile];
 	while (queue.length > 0) {
 		const file = queue.pop();
 		if (seen.has(file) || file.endsWith(".json")) continue;
 		seen.add(file);
-		for (const match of readFileSync(file, "utf8").matchAll(SPEC)) {
+		for (const match of readFileSync(file, "utf8").matchAll(spec)) {
 			const target = resolveSpec(match[2], file);
 			if (target) queue.push(target);
 		}
@@ -122,7 +177,11 @@ for (const [pkgDir, budgets] of Object.entries(BUDGETS)) {
 				failures += 1;
 				continue;
 			}
-			const graph = [...walk(source)].map((file) => relative(ROOT, file));
+			// Forward slashes: a forbid pattern is a repo-relative path, and on Windows `relative()`
+			// returns backslashes, which silently made every pattern miss.
+			const graph = [...walk(source, budget.includeTypeImports === true)].map((file) =>
+				relative(ROOT, file).split(sep).join("/"),
+			);
 			if (graph.length > budget.maxFiles) {
 				console.error(
 					`${pkgDir} export "${name}" reaches ${graph.length} files, budget ${budget.maxFiles}\n` +
@@ -139,6 +198,15 @@ for (const [pkgDir, budgets] of Object.entries(BUDGETS)) {
 			}
 		}
 	}
+}
+
+if (unregistered.size > 0) {
+	// Reported after the walk so the message can list every unregistered specifier at once. These are
+	// not necessarily budget violations today, but each one is a budget that silently does not apply.
+	for (const spec of [...unregistered].sort()) {
+		console.error(`Unregistered workspace specifier "${spec}". Add it to WORKSPACE in scripts/check-entry-graphs.mjs.`);
+	}
+	failures += 1;
 }
 
 if (failures > 0) {

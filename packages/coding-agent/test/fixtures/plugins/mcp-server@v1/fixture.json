@@ -1,0 +1,9 @@
+{
+	"apiVersion": "1",
+	"hostVersionAtCreation": "1.0.0",
+	"createdAt": "2026-10-03",
+	"layer": 3,
+	"source": "synthetic",
+	"sha256": "03933d04c834337c30f5e21a9130b69169ffed65f77f1b173f9682d7d77b524e",
+	"note": "Pins the registerMcpServer signature and config shape, including the four-member exposure union. The JSDoc behavioural contracts on the host cannot be pinned by a type. Synthetic until a version-1 plugin is published."
+}

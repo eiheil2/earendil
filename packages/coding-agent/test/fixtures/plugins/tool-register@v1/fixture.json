@@ -1,0 +1,9 @@
+{
+	"apiVersion": "1",
+	"hostVersionAtCreation": "1.0.0",
+	"createdAt": "2026-10-03",
+	"layer": 4,
+	"source": "synthetic",
+	"sha256": "418c83f3e33fcc76a0856ca60e1e055ba3824f44df7c4b81738d624bbf0b4c5d",
+	"note": "Pins registerTool's name, arity and required tool-definition fields, plus the typebox allowlist entry. Synthetic because no version-1 plugin was published when this fixture was written; replace with a release snapshot once one exists."
+}

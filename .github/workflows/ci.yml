@@ -60,3 +60,81 @@ jobs:
       # regressions against packages/coding-agent/test/mcp-conformance/baseline.json.
       - name: MCP client conformance
         run: npm run test:mcp-conformance
+
+  # The extension compatibility matrix, issue #76.
+  #
+  # What "compatibility" means here, precisely: the plugins in
+  # packages/coding-agent/test/fixtures/plugins/ must keep loading against the current core, and must keep
+  # registering what they registered. That is the one claim the contract makes - refactoring the core does not
+  # break extensions - and this job is what makes it a check rather than an intention.
+  #
+  # Three shape decisions, each with a reason:
+  #
+  # - `fail-fast: false`. The other matrix-shaped job has one case; this has fixture x mode. A single
+  #   cancelled run tells you one thing, and a broken change usually breaks more than one case. The full
+  #   picture is the point.
+  # - No "core version" axis. The matrix runs against the current `main`, which is exactly the question
+  #   "does updating the core break existing plugins". Evaluating old cores x new plugins is a nightly's job,
+  #   because that combination requires git history this job does not have.
+  # - The baseline is compared with `--check`, like `check:shrinkwrap` and `check:install-lock`. A generated
+  #   artifact that can be rewritten silently is not a baseline; `--check` puts the diff in review instead of
+  #   a failure inside CI, so a reviewer sees what moved.
+  plugin-compat:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        fixture:
+          - exhaustive-switch@v1
+          - exhaustive-switch-with-default@v1
+          - tool-register@v1
+          - events-only@v1
+          - provider-oauth@v1
+          - mcp-server@v1
+          - manifest-unknown-fields@v1
+          - min-host-version@v1
+          - legacy-no-manifest@v0
+        mode: [discover, explicit, factory]
+    name: plugin-compat (${{ matrix.fixture }}, ${{ matrix.mode }})
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      # Build is required, not optional: the fixtures import `@earendil-works/pi-plugin-sdk` by package
+      # name, which resolves to the workspace's `dist`. Without a build the compile layer fails on module
+      # resolution rather than on anything about the contract.
+      - name: Build
+        run: npm run build
+
+      # L1: every fixture compiles against the contract version it declares, and the SDK stays mutually
+      # assignable with the host. This is the only layer that sees a type-level regression - jiti strips types
+      # without checking them, so a narrowed type would load fine here and break every extension built against
+      # the old shape.
+      - name: L1 compile
+        run: node node_modules/vitest/dist/cli.js --run --root packages/coding-agent test/compat/compile.test.ts
+
+      # L2: the fixture loads through this entry point with the surface the baseline records.
+      - name: L2 contract (${{ matrix.mode }})
+        env:
+          PI_COMPAT_FIXTURE: ${{ matrix.fixture }}
+          PI_COMPAT_MODE: ${{ matrix.mode }}
+        run: node node_modules/vitest/dist/cli.js --run --root packages/coding-agent test/compat/load.test.ts
+
+      # The recorded surface has not moved. `--check` fails with a diff and writes nothing.
+      - name: L2 surface baseline
+        run: npm run check:plugin-compat-baseline
+
+      # The R8 pin: an exhaustive switch without a `default` branch must stop compiling when an event is
+      # added, and its defensive sibling must keep compiling. Run in every matrix leg on purpose - it is the
+      # same claim each time, and running it once per fixture costs little next to finding out at merge time.
+      - name: R8 exhaustive-switch pin
+        run: node node_modules/vitest/dist/cli.js --run --root packages/plugin-sdk test/r8-exhaustive-switch/r8-exhaustive-switch.test.ts

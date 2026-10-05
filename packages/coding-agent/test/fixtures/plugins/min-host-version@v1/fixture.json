@@ -1,0 +1,9 @@
+{
+	"apiVersion": "1",
+	"hostVersionAtCreation": "1.0.0",
+	"createdAt": "2026-10-03",
+	"layer": 1,
+	"source": "synthetic",
+	"sha256": "cf0273d383fb07c550c5f88a5a66baacb9f638364823551cc9626e214e87612a",
+	"note": "Pins the minHostVersion warning path: E3, warn and load. The only fixture expected to produce a warning; it is also the first user of the loader's previously-unused warnings slot."
+}

@@ -1,0 +1,8 @@
+{
+	"name": "pi-fixture-legacy-no-manifest",
+	"version": "1.0.0",
+	"private": true,
+	"type": "module",
+	"description": "Compatibility fixture: a plugin written before the contract existed",
+	"dependencies": {}
+}

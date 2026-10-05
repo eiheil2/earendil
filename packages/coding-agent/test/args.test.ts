@@ -282,6 +282,20 @@ describe("parseArgs", () => {
 		});
 	});
 
+	describe("--strict-capabilities flag", () => {
+		test("is off by default", () => {
+			expect(parseArgs([]).strictCapabilities).toBeUndefined();
+		});
+
+		test("parses --strict-capabilities", () => {
+			expect(parseArgs(["--strict-capabilities"]).strictCapabilities).toBe(true);
+		});
+
+		test("is not mistaken for an extension flag", () => {
+			expect(parseArgs(["--strict-capabilities"]).unknownFlags.size).toBe(0);
+		});
+	});
+
 	describe("--skill flag", () => {
 		test("parses single --skill", () => {
 			const result = parseArgs(["--skill", "./skill-dir"]);

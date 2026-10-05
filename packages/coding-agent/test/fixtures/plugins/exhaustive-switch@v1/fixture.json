@@ -1,0 +1,9 @@
+{
+	"apiVersion": "1",
+	"hostVersionAtCreation": "1.0.0",
+	"createdAt": "2026-10-03",
+	"layer": 2,
+	"source": "synthetic",
+	"sha256": "034d10fec8346e42c23e182644164c7f097a43827300b7fbcf789ac15b79051d",
+	"note": "R8 pin, positive case: an exhaustive switch over the event union with no default branch. Must stop compiling when an event is added; the sibling fixture is the control. Meta-test: packages/plugin-sdk/test/r8-exhaustive-switch."
+}

@@ -1,0 +1,16 @@
+{
+	"name": "pi-fixture-min-host-version",
+	"version": "1.0.0",
+	"private": true,
+	"type": "module",
+	"description": "Compatibility fixture: a plugin that requires a host version this build does not satisfy",
+	"pi": {
+		"extensions": ["./index.ts"],
+		"apiVersion": "1",
+		"minHostVersion": ">=999.0.0",
+		"capabilities": ["command.register"]
+	},
+	"dependencies": {
+		"@earendil-works/pi-plugin-sdk": "1.0.0"
+	}
+}

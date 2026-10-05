@@ -1,0 +1,15 @@
+{
+	"name": "pi-fixture-exhaustive-switch-with-default",
+	"version": "1.0.0",
+	"private": true,
+	"type": "module",
+	"description": "Compatibility fixture: the same exhaustive switch with a default branch",
+	"pi": {
+		"extensions": ["./index.ts"],
+		"apiVersion": "1",
+		"capabilities": ["event.subscribe", "command.register"]
+	},
+	"dependencies": {
+		"@earendil-works/pi-plugin-sdk": "1.0.0"
+	}
+}

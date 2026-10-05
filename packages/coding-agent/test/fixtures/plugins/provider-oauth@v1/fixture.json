@@ -1,0 +1,9 @@
+{
+	"apiVersion": "1",
+	"hostVersionAtCreation": "1.0.0",
+	"createdAt": "2026-10-03",
+	"layer": 4,
+	"source": "synthetic",
+	"sha256": "449dd6f05c07dd3fb7f159ff3bd3b81ddcccd0c3a34198eb40ee4c07a0407c55",
+	"note": "Pins ProviderConfig.oauth, in particular the deprecated usesCallbackServer that a refactor would otherwise be tempted to delete. Synthetic until a version-1 plugin is published."
+}

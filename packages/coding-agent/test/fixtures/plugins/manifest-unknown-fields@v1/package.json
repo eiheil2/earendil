@@ -1,0 +1,20 @@
+{
+	"name": "pi-fixture-manifest-unknown-fields",
+	"version": "1.0.0",
+	"private": true,
+	"type": "module",
+	"description": "Compatibility fixture: a manifest carrying fields this host does not know",
+	"pi": {
+		"extensions": ["./index.ts"],
+		"apiVersion": "1",
+		"capabilities": ["command.register"],
+		"author": "compatibility-fixtures",
+		"homepage": "https://example.com/fixture",
+		"keywords": ["pi", "extension"],
+		"x-internal-build": 12345,
+		"descriptionOfThing": { "nested": ["unknown", { "deeply": true }] }
+	},
+	"dependencies": {
+		"@earendil-works/pi-plugin-sdk": "1.0.0"
+	}
+}

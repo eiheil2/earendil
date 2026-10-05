@@ -16,10 +16,11 @@ import { createEventBus, type EventBus } from "../event-bus.ts";
 import type { ExecOptions } from "../exec.ts";
 import { execCommand } from "../exec.ts";
 import { type McpServerConfig, McpServerRegistry, mcpNamespace, validateMcpServerConfig } from "../mcp-servers.ts";
-import { readPiManifest } from "../pi-manifest.ts";
+import { resolveExtensionEntries } from "../pi-manifest.ts";
 import { createSyntheticSourceInfo, getSyntheticPathSource, isSyntheticPath } from "../source-info.ts";
 import { time } from "../timings.ts";
 import type { ModelRouteRequest, VirtualModelDefinition } from "../virtual-models.ts";
+import { checkExtensionContract, type ExtensionLoadOptions, findExtensionManifest } from "./contract.ts";
 import type {
 	EntryRenderer,
 	Extension,
@@ -245,10 +246,15 @@ function createExtensionAPI(
 	runtime: ExtensionRuntime,
 	cwd: string,
 	eventBus: EventBus,
-): { api: ExtensionAPI; commit: () => void; discard: () => void } {
+): { api: ExtensionAPI; observedCapabilities: Set<string>; commit: () => void; discard: () => void } {
 	const pendingFlagValues = new Map<string, boolean | string>();
 	const pendingRuntimeChanges: Array<() => void> = [];
 	const loadingUnsubscribers: Array<() => void> = [];
+	// What this extension actually registered, for the contract check that runs before commit().
+	// Recording it here rather than reading the runtime's pending slots is deliberate: provider,
+	// virtual-model and MCP registrations are queued until commit, so before commit they are not
+	// observable anywhere else.
+	const observedCapabilities = new Set<string>();
 	let state: "loading" | "active" | "failed" = "loading";
 	const assertActive = () => {
 		if (state === "failed") {
@@ -270,6 +276,7 @@ function createExtensionAPI(
 		// Registration methods - write to extension
 		on(event: string, handler: HandlerFn): () => void {
 			assertActive();
+			observedCapabilities.add("event.subscribe");
 			const registeredHandler: HandlerFn = (...args) => handler(...args);
 			const list = extension.handlers.get(event) ?? [];
 			list.push(registeredHandler);
@@ -287,6 +294,7 @@ function createExtensionAPI(
 
 		registerTool(tool: ToolDefinition): void {
 			assertActive();
+			observedCapabilities.add("tool.register");
 			if (typeof tool.parameters !== "object" || tool.parameters === null || Array.isArray(tool.parameters)) {
 				throw new Error(
 					`Tool "${tool.name}" registered by extension "${extension.path}" must define an object parameter schema.`,
@@ -301,6 +309,7 @@ function createExtensionAPI(
 
 		registerCommand(name: string, options: Omit<RegisteredCommand, "name" | "sourceInfo">): void {
 			assertActive();
+			observedCapabilities.add("command.register");
 			if (typeof name !== "string" || name.length === 0) {
 				throw new Error(
 					`Command registered by extension "${extension.path}" must have a non-empty string name. Use pi.registerCommand("name", { description, handler }).`,
@@ -324,6 +333,7 @@ function createExtensionAPI(
 			},
 		): void {
 			assertActive();
+			observedCapabilities.add("shortcut.register");
 			extension.shortcuts.set(shortcut, { shortcut, extensionPath: extension.path, ...options });
 		},
 
@@ -332,6 +342,7 @@ function createExtensionAPI(
 			options: { description?: string; type: "boolean" | "string"; default?: boolean | string },
 		): void {
 			assertActive();
+			observedCapabilities.add("flag.register");
 			if (options.default !== undefined && typeof options.default !== options.type) {
 				throw new Error(
 					`Invalid default for flag "${name}": expected ${options.type}, got ${typeof options.default}`,
@@ -448,6 +459,7 @@ function createExtensionAPI(
 
 		registerProvider(providerOrName: Provider | string, config?: ProviderConfig) {
 			assertActive();
+			observedCapabilities.add("provider.register");
 			if (typeof providerOrName === "string") {
 				if (!config) throw new Error("Provider config is required when registering by name");
 				applyRuntimeChange(() => runtime.registerProvider(providerOrName, config, extension.path));
@@ -458,30 +470,39 @@ function createExtensionAPI(
 
 		unregisterProvider(name: string) {
 			assertActive();
+			observedCapabilities.add("provider.register");
 			applyRuntimeChange(() => runtime.unregisterProvider(name, extension.path));
 		},
 
 		registerMcpServer(name: string, config: McpServerConfig) {
 			assertActive();
+			observedCapabilities.add("mcp.register");
 			const validated = validateMcpServerConfig(name, config);
 			if (typeof validated === "string") {
 				throw new Error(`Invalid MCP server registered by extension "${extension.path}": ${validated}`);
 			}
 			const owner = runtime.mcpServers.get(name)?.extensionPath;
 			if (owner !== undefined && owner !== extension.path) {
-				throw new Error(`MCP server "${name}" is already registered by extension "${owner}"`);
+				throw new Error(
+					`MCP server "${name}" requested by extension "${extension.path}" is already registered by extension "${owner}"`,
+				);
 			}
 			// Names that differ only in `-` and `_` would share a namespace.
 			const clash = runtime.mcpServers
 				.list()
 				.find((server) => server.name !== name && mcpNamespace(server.name) === mcpNamespace(name));
-			if (clash) throw new Error(`MCP server "${name}" conflicts with registered server "${clash.name}"`);
+			if (clash) {
+				throw new Error(
+					`MCP server "${name}" requested by extension "${extension.path}" conflicts with server "${clash.name}" registered by extension "${clash.extensionPath}"`,
+				);
+			}
 			const server = { name, config: structuredClone(validated), extensionPath: extension.path };
 			applyRuntimeChange(() => runtime.mcpServers.register(server));
 		},
 
 		unregisterMcpServer(name: string) {
 			assertActive();
+			observedCapabilities.add("mcp.register");
 			applyRuntimeChange(() => runtime.mcpServers.unregister(name, extension.path));
 		},
 
@@ -492,6 +513,7 @@ function createExtensionAPI(
 
 		registerVirtualModel<TState>(model: ExtensionVirtualModel<TState>) {
 			assertActive();
+			observedCapabilities.add("virtualModel.register");
 			// Routing runs after the runner binds, so the context is created per request. The state
 			// comes from the session branch that this router wrote.
 			const definition: VirtualModelDefinition = {
@@ -503,16 +525,19 @@ function createExtensionAPI(
 
 		unregisterVirtualModel(provider: string, id: string) {
 			assertActive();
+			observedCapabilities.add("virtualModel.register");
 			applyRuntimeChange(() => runtime.unregisterVirtualModel(provider, id));
 		},
 
 		events: {
 			emit(channel, data) {
 				assertActive();
+				observedCapabilities.add("eventbus.publish");
 				eventBus.emit(channel, data);
 			},
 			on(channel, handler) {
 				assertActive();
+				observedCapabilities.add("eventbus.publish");
 				const unsubscribe = runtime.trackEventBusSubscription(eventBus.on(channel, handler));
 				if (state === "loading") loadingUnsubscribers.push(unsubscribe);
 				return unsubscribe;
@@ -522,6 +547,7 @@ function createExtensionAPI(
 
 	return {
 		api,
+		observedCapabilities,
 		commit: () => {
 			if (state !== "loading") return;
 			runtime.assertActive();
@@ -603,6 +629,14 @@ function createExtension(extensionPath: string, resolvedPath: string): Extension
 	};
 }
 
+/**
+ * Run one extension factory and commit it atomically.
+ *
+ * The contract envelope is evaluated between the factory and `commit()`: everything the extension
+ * registered is still pending there, so the observation is complete, and a rejected extension
+ * (`E0`) is discarded exactly like one whose factory threw. Both throw to the caller, which keeps the
+ * collection fail-soft by recording the failure and moving on to the next extension.
+ */
 async function initializeExtension(
 	factory: ExtensionFactory,
 	extensionPath: string,
@@ -610,18 +644,27 @@ async function initializeExtension(
 	cwd: string,
 	eventBus: EventBus,
 	runtime: ExtensionRuntime,
-): Promise<Extension> {
+	options: ExtensionLoadOptions,
+): Promise<{ extension: Extension; warnings: string[] }> {
 	const extension = createExtension(extensionPath, resolvedPath);
 	const load = createExtensionAPI(extension, runtime, cwd, eventBus);
 	try {
 		await factory(load.api);
+		const contract = checkExtensionContract(
+			findExtensionManifest(resolvedPath),
+			[...load.observedCapabilities],
+			options,
+		);
+		if (contract.errors.length > 0) {
+			throw new Error(`Extension contract not satisfied: ${contract.errors.join("; ")}`);
+		}
 		load.commit();
+		time(`${extensionPath} factory`, "extensions");
+		return { extension, warnings: contract.warnings };
 	} catch (error) {
 		load.discard();
 		throw error;
 	}
-	time(`${extensionPath} factory`, "extensions");
-	return extension;
 }
 
 async function loadExtension(
@@ -629,23 +672,36 @@ async function loadExtension(
 	cwd: string,
 	eventBus: EventBus,
 	runtime: ExtensionRuntime,
-	cacheToken?: ExtensionCacheToken,
-): Promise<{ extension: Extension | null; error: string | null }> {
+	cacheToken: ExtensionCacheToken | undefined,
+	options: ExtensionLoadOptions,
+): Promise<{ extension: Extension | null; error: string | null; warnings: string[] }> {
 	const resolvedPath = resolvePath(extensionPath, cwd, { normalizeUnicodeSpaces: true });
 
 	try {
 		const factory = await loadExtensionModule(resolvedPath, cacheToken);
 		time(`${extensionPath} module import`, "extensions");
 		if (!factory) {
-			return { extension: null, error: `Extension does not export a valid factory function: ${extensionPath}` };
+			return {
+				extension: null,
+				error: `Extension does not export a valid factory function: ${extensionPath}`,
+				warnings: [],
+			};
 		}
 
-		const extension = await initializeExtension(factory, extensionPath, resolvedPath, cwd, eventBus, runtime);
+		const { extension, warnings } = await initializeExtension(
+			factory,
+			extensionPath,
+			resolvedPath,
+			cwd,
+			eventBus,
+			runtime,
+			options,
+		);
 
-		return { extension, error: null };
+		return { extension, error: null, warnings };
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err);
-		return { extension: null, error: `Failed to load extension: ${message}` };
+		return { extension: null, error: `Failed to load extension: ${message}`, warnings: [] };
 	}
 }
 
@@ -660,7 +716,17 @@ export async function loadExtensionFromFactory(
 	extensionPath = "<inline>",
 ): Promise<Extension> {
 	const resolvedCwd = resolvePath(cwd);
-	return initializeExtension(factory, extensionPath, extensionPath, resolvedCwd, eventBus, runtime);
+	// Inline and built-in extensions have no manifest, so there is no envelope to evaluate.
+	const { extension } = await initializeExtension(
+		factory,
+		extensionPath,
+		extensionPath,
+		resolvedCwd,
+		eventBus,
+		runtime,
+		{},
+	);
+	return extension;
 }
 
 /**
@@ -672,6 +738,7 @@ async function loadExtensionsInternal(
 	eventBus?: EventBus,
 	runtime?: ExtensionRuntime,
 	useCache = false,
+	options: ExtensionLoadOptions = {},
 ): Promise<LoadExtensionsResult> {
 	const extensions: Extension[] = [];
 	const errors: Array<{ path: string; error: string }> = [];
@@ -682,17 +749,19 @@ async function loadExtensionsInternal(
 	const resolvedRuntime = runtime ?? createExtensionRuntime();
 
 	for (const extPath of paths) {
-		const { extension, error } = await loadExtension(
-			extPath,
-			resolvedCwd,
-			resolvedEventBus,
-			resolvedRuntime,
-			cacheToken,
-		);
+		const {
+			extension,
+			error,
+			warnings: extensionWarnings,
+		} = await loadExtension(extPath, resolvedCwd, resolvedEventBus, resolvedRuntime, cacheToken, options);
 
 		if (error) {
 			errors.push({ path: extPath, error });
 			continue;
+		}
+
+		for (const warning of extensionWarnings) {
+			warnings.push({ path: extPath, warning });
 		}
 
 		if (extension) {
@@ -713,8 +782,9 @@ export async function loadExtensions(
 	cwd: string,
 	eventBus?: EventBus,
 	runtime?: ExtensionRuntime,
+	options?: ExtensionLoadOptions,
 ): Promise<LoadExtensionsResult> {
-	return loadExtensionsInternal(paths, cwd, eventBus, runtime);
+	return loadExtensionsInternal(paths, cwd, eventBus, runtime, false, options);
 }
 
 export async function loadExtensionsCached(
@@ -722,53 +792,13 @@ export async function loadExtensionsCached(
 	cwd: string,
 	eventBus?: EventBus,
 	runtime?: ExtensionRuntime,
+	options?: ExtensionLoadOptions,
 ): Promise<LoadExtensionsResult> {
-	return loadExtensionsInternal(paths, cwd, eventBus, runtime, true);
+	return loadExtensionsInternal(paths, cwd, eventBus, runtime, true, options);
 }
 
 function isExtensionFile(name: string): boolean {
 	return name.endsWith(".ts") || name.endsWith(".js");
-}
-
-/**
- * Resolve extension entry points from a directory.
- *
- * Checks for:
- * 1. package.json with "pi.extensions" field -> returns declared paths
- * 2. index.ts or index.js -> returns the index file
- *
- * Returns resolved paths or null if no entry points found.
- */
-function resolveExtensionEntries(dir: string): string[] | null {
-	// Check for package.json with "pi" field first
-	const packageJsonPath = path.join(dir, "package.json");
-	if (fs.existsSync(packageJsonPath)) {
-		const manifest = readPiManifest(packageJsonPath);
-		if (manifest?.extensions?.length) {
-			const entries: string[] = [];
-			for (const extPath of manifest.extensions) {
-				const resolvedExtPath = path.resolve(dir, extPath);
-				if (fs.existsSync(resolvedExtPath)) {
-					entries.push(resolvedExtPath);
-				}
-			}
-			if (entries.length > 0) {
-				return entries;
-			}
-		}
-	}
-
-	// Check for index.ts or index.js
-	const indexTs = path.join(dir, "index.ts");
-	const indexJs = path.join(dir, "index.js");
-	if (fs.existsSync(indexTs)) {
-		return [indexTs];
-	}
-	if (fs.existsSync(indexJs)) {
-		return [indexJs];
-	}
-
-	return null;
 }
 
 /**
@@ -823,6 +853,7 @@ export async function discoverAndLoadExtensions(
 	cwd: string,
 	agentDir: string = getAgentDir(),
 	eventBus?: EventBus,
+	options?: ExtensionLoadOptions,
 ): Promise<LoadExtensionsResult> {
 	const resolvedCwd = resolvePath(cwd);
 	const resolvedAgentDir = resolvePath(agentDir);
@@ -865,5 +896,5 @@ export async function discoverAndLoadExtensions(
 		addPaths([resolved]);
 	}
 
-	return loadExtensions(allPaths, resolvedCwd, eventBus);
+	return loadExtensions(allPaths, resolvedCwd, eventBus, undefined, options);
 }

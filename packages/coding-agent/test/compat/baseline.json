@@ -1,0 +1,233 @@
+{
+	"hostVersion": "1.0.0",
+	"pluginApiVersion": "1",
+	"fixtures": [
+		{
+			"name": "exhaustive-switch@v1",
+			"apiVersion": "1",
+			"errors": [],
+			"warnings": [],
+			"surface": [
+				{
+					"path": "index.ts",
+					"handlers": [
+						"session_start"
+					],
+					"tools": [],
+					"messageRenderers": [],
+					"entryRenderers": [],
+					"commands": [
+						"fixture-exhaustive-switch"
+					],
+					"flags": [],
+					"shortcuts": [],
+					"renderers": []
+				}
+			],
+			"providers": [],
+			"virtualModels": [],
+			"mcpServers": []
+		},
+		{
+			"name": "exhaustive-switch-with-default@v1",
+			"apiVersion": "1",
+			"errors": [],
+			"warnings": [],
+			"surface": [
+				{
+					"path": "index.ts",
+					"handlers": [
+						"session_start"
+					],
+					"tools": [],
+					"messageRenderers": [],
+					"entryRenderers": [],
+					"commands": [
+						"fixture-exhaustive-switch-with-default"
+					],
+					"flags": [],
+					"shortcuts": [],
+					"renderers": []
+				}
+			],
+			"providers": [],
+			"virtualModels": [],
+			"mcpServers": []
+		},
+		{
+			"name": "tool-register@v1",
+			"apiVersion": "1",
+			"errors": [],
+			"warnings": [],
+			"surface": [
+				{
+					"path": "index.ts",
+					"handlers": [],
+					"tools": [
+						"fixture_echo"
+					],
+					"messageRenderers": [],
+					"entryRenderers": [],
+					"commands": [],
+					"flags": [],
+					"shortcuts": [],
+					"renderers": []
+				}
+			],
+			"providers": [],
+			"virtualModels": [],
+			"mcpServers": []
+		},
+		{
+			"name": "events-only@v1",
+			"apiVersion": "1",
+			"errors": [],
+			"warnings": [],
+			"surface": [
+				{
+					"path": "index.ts",
+					"handlers": [
+						"project_trust",
+						"session_start",
+						"tool_call",
+						"tool_execution_end"
+					],
+					"tools": [],
+					"messageRenderers": [],
+					"entryRenderers": [],
+					"commands": [],
+					"flags": [],
+					"shortcuts": [],
+					"renderers": []
+				}
+			],
+			"providers": [],
+			"virtualModels": [],
+			"mcpServers": []
+		},
+		{
+			"name": "provider-oauth@v1",
+			"apiVersion": "1",
+			"errors": [],
+			"warnings": [],
+			"surface": [
+				{
+					"path": "index.ts",
+					"handlers": [],
+					"tools": [],
+					"messageRenderers": [],
+					"entryRenderers": [],
+					"commands": [],
+					"flags": [],
+					"shortcuts": [],
+					"renderers": []
+				}
+			],
+			"providers": [
+				"fixture-oauth-provider"
+			],
+			"virtualModels": [],
+			"mcpServers": []
+		},
+		{
+			"name": "mcp-server@v1",
+			"apiVersion": "1",
+			"errors": [],
+			"warnings": [],
+			"surface": [
+				{
+					"path": "index.ts",
+					"handlers": [],
+					"tools": [],
+					"messageRenderers": [],
+					"entryRenderers": [],
+					"commands": [],
+					"flags": [],
+					"shortcuts": [],
+					"renderers": []
+				}
+			],
+			"providers": [],
+			"virtualModels": [],
+			"mcpServers": [
+				"fixture-mcp"
+			]
+		},
+		{
+			"name": "manifest-unknown-fields@v1",
+			"apiVersion": "1",
+			"errors": [],
+			"warnings": [],
+			"surface": [
+				{
+					"path": "index.ts",
+					"handlers": [],
+					"tools": [],
+					"messageRenderers": [],
+					"entryRenderers": [],
+					"commands": [
+						"fixture-unknown-fields"
+					],
+					"flags": [],
+					"shortcuts": [],
+					"renderers": []
+				}
+			],
+			"providers": [],
+			"virtualModels": [],
+			"mcpServers": []
+		},
+		{
+			"name": "min-host-version@v1",
+			"apiVersion": "1",
+			"errors": [],
+			"warnings": [
+				"requires host >=999.0.0; host version is 1.0.0"
+			],
+			"surface": [
+				{
+					"path": "index.ts",
+					"handlers": [],
+					"tools": [],
+					"messageRenderers": [],
+					"entryRenderers": [],
+					"commands": [
+						"fixture-min-host-version"
+					],
+					"flags": [],
+					"shortcuts": [],
+					"renderers": []
+				}
+			],
+			"providers": [],
+			"virtualModels": [],
+			"mcpServers": []
+		},
+		{
+			"name": "legacy-no-manifest@v0",
+			"apiVersion": "0",
+			"errors": [],
+			"warnings": [],
+			"surface": [
+				{
+					"path": "index.ts",
+					"handlers": [],
+					"tools": [],
+					"messageRenderers": [],
+					"entryRenderers": [],
+					"commands": [
+						"fixture-legacy"
+					],
+					"flags": [
+						"fixture-legacy-flag"
+					],
+					"shortcuts": [],
+					"renderers": []
+				}
+			],
+			"providers": [],
+			"virtualModels": [],
+			"mcpServers": []
+		}
+	]
+}

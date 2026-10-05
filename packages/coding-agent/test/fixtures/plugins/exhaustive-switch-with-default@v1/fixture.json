@@ -1,0 +1,9 @@
+{
+	"apiVersion": "1",
+	"hostVersionAtCreation": "1.0.0",
+	"createdAt": "2026-10-03",
+	"layer": 2,
+	"source": "synthetic",
+	"sha256": "d27de190f27483f238fe588a6ab88af4a0f179df1fe5793e2870af1748fbd3f0",
+	"note": "R8 pin, control case: the same switch with a default branch. Must keep compiling when an event is added. Without this pair the pin would either break legitimate additive evolution or prove nothing. Meta-test: packages/plugin-sdk/test/r8-exhaustive-switch."
+}
