@@ -400,6 +400,8 @@ export interface LoadSkillsOptions {
 	skillPaths: string[];
 	/** Include default skills directories. */
 	includeDefaults: boolean;
+	/** Packaged defaults are loaded after user/project defaults so they are overridable. */
+	builtinDefaultsDir?: string;
 }
 
 /**
@@ -450,8 +452,11 @@ export function loadSkills(options: LoadSkillsOptions): LoadSkillsResult {
 	}
 
 	if (includeDefaults) {
-		addSkills(loadSkillsFromDirInternal(join(resolvedAgentDir, "skills"), "user", true));
 		addSkills(loadSkillsFromDirInternal(resolve(resolvedCwd, CONFIG_DIR_NAME, "skills"), "project", true));
+		addSkills(loadSkillsFromDirInternal(join(resolvedAgentDir, "skills"), "user", true));
+		if (options.builtinDefaultsDir) {
+			addSkills(loadSkillsFromDirInternal(resolve(options.builtinDefaultsDir, "skills"), "builtin", true));
+		}
 	}
 
 	const userSkillsDir = join(resolvedAgentDir, "skills");

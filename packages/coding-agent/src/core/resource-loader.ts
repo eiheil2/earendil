@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { detectCapabilities, getTerminalColorMode, type TerminalColorMode } from "@earendil-works/pi-tui";
 import chalk from "chalk";
-import { CONFIG_DIR_NAME } from "../config.ts";
+import { CONFIG_DIR_NAME, getPackageDir } from "../config.ts";
 import { loadThemeFromPath, type Theme } from "../modes/interactive/theme/theme.ts";
 import type { ResourceDiagnostic } from "./diagnostics.ts";
 
@@ -841,7 +841,8 @@ export class DefaultResourceLoader implements ResourceLoader {
 				cwd: this.cwd,
 				agentDir: this.agentDir,
 				skillPaths,
-				includeDefaults: false,
+				includeDefaults: this.settingsManager.getBuiltinSkills(),
+				builtinDefaultsDir: join(getPackageDir(), "assets", "builtin-defaults"),
 			});
 		}
 		const resolvedSkills = this.skillsOverride ? this.skillsOverride(skillsResult) : skillsResult;
@@ -864,7 +865,8 @@ export class DefaultResourceLoader implements ResourceLoader {
 				cwd: this.cwd,
 				agentDir: this.agentDir,
 				promptPaths,
-				includeDefaults: false,
+				includeDefaults: this.settingsManager.getBuiltinPrompts(),
+				builtinDefaultsDir: join(getPackageDir(), "assets", "builtin-defaults"),
 			});
 			const deduped = this.dedupePrompts(loaded.templates);
 			promptsResult = {

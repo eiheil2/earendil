@@ -206,6 +206,7 @@ export interface LoadPromptTemplatesOptions {
 	promptPaths: string[];
 	/** Include default prompt directories. */
 	includeDefaults: boolean;
+	builtinDefaultsDir?: string;
 }
 
 export interface LoadPromptTemplatesResult {
@@ -266,8 +267,11 @@ export function loadPromptTemplates(options: LoadPromptTemplatesOptions): LoadPr
 	};
 
 	if (includeDefaults) {
-		addResult(loadTemplatesFromDir(globalPromptsDir, getSourceInfo));
 		addResult(loadTemplatesFromDir(projectPromptsDir, getSourceInfo));
+		addResult(loadTemplatesFromDir(globalPromptsDir, getSourceInfo));
+		if (options.builtinDefaultsDir) {
+			addResult(loadTemplatesFromDir(resolve(options.builtinDefaultsDir, "prompts"), getSourceInfo));
+		}
 	}
 
 	// 3. Load explicit prompt paths
