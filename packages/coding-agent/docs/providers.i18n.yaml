@@ -1,0 +1,37 @@
+# Bilingual-pair consistency record: one entry per heading section, holding the hash of the
+# English and the Chinese prose in that section. Code fences are excluded because they must be
+# byte-identical on both sides. After editing either side, bring the other along and re-record:
+#   node scripts/verify-doc-bilingual.mjs --write <pair>
+/providers:
+  en: 3c7b9ccd3b9287b6
+  zh: 57c5be9890c53963
+/authenticate-interactively:
+  en: 0eacc1a9fd54fde3
+  zh: 789b9852bcbb6eac
+/use-an-api-key-from-the-environment:
+  en: 3f373fe35174b1a6
+  zh: 5df729832512feaa
+/load-an-api-key-from-a-command:
+  en: 7e2f6699d8d8b303
+  zh: 88c96d0cb33fd79c
+/provider-specific-config:
+  en: 1c65883b4773abb5
+  zh: 10fb3cac02def965
+/radius:
+  en: 551da0f8de8fe995
+  zh: 21af156ca052e0d7
+/azure-openai:
+  en: 18c58c75c4cd212f
+  zh: 1433a02eada9005a
+/amazon-bedrock:
+  en: 09db91b3e0e26c9e
+  zh: 2c666afcf7f2a1eb
+/cloudflare-ai-gateway:
+  en: 22e915f0e2857b81
+  zh: dab159d20d1e7e91
+/cloudflare-workers-ai:
+  en: b0633f88893964d1
+  zh: f012754bc65ed77b
+/google-vertex-ai:
+  en: 8b8607e1c8e48921
+  zh: 8f3f32643c5bd32f

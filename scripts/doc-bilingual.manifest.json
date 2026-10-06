@@ -1,0 +1,7 @@
+{
+	"pairs": [
+		"packages/coding-agent/docs/quickstart.md",
+		"packages/coding-agent/docs/configuration.md",
+		"packages/coding-agent/docs/providers.md"
+	]
+}

@@ -1,0 +1,31 @@
+# Bilingual-pair consistency record: one entry per heading section, holding the hash of the
+# English and the Chinese prose in that section. Code fences are excluded because they must be
+# byte-identical on both sides. After editing either side, bring the other along and re-record:
+#   node scripts/verify-doc-bilingual.mjs --write <pair>
+/quickstart:
+  en: 72c5cfdda9cfd804
+  zh: 25da53207de21222
+/1-install-pi:
+  en: 2a1a1c682ce0d294
+  zh: 5de9d5b405be6461
+/2-start-pi:
+  en: d24f823f8bc795fb
+  zh: d0b88030ce2389b4
+/3-choose-a-model:
+  en: ee6b9640ee18a8d6
+  zh: 32e81eef3f2a19cd
+/4-give-pi-a-task:
+  en: 50a1c1669db8f90b
+  zh: 5e6dde73b51bfcf4
+/continue-later:
+  en: 98e4c88ffefc18b3
+  zh: c8e44c099190f35b
+/next-steps:
+  en: d633334741b1359e
+  zh: 8c54c9a84c12beb3
+/choose-how-to-customize-pi:
+  en: a8097e5458982687
+  zh: 15f625076d872a82
+/uninstall-pi:
+  en: 84b87ea7ec461590
+  zh: 7f05646f597a93e0

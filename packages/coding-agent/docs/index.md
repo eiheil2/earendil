@@ -34,6 +34,8 @@ Use the reference pages to look up [CLI options](cli.md), [settings](settings.md
 
 For platform-specific help, see [Terminal Setup](terminal-setup.md), [Windows](windows.md), [tmux](tmux.md), [Termux on Android](termux.md), or [Containerization](containerization.md).
 
+To work on these docs themselves - the `pi://` URLs, bilingual pages, and size budgets - see [Documentation](documentation.md).
+
 ## Work safely
 
 Pi's tools and extensions run with the permissions of the Pi process. Project trust controls which project resources Pi loads, but it does not sandbox tool calls. Review [Security](security.md) before using untrusted files, repositories, extensions, or unattended automation.

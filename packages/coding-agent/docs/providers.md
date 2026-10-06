@@ -1,5 +1,7 @@
 # Providers
 
+English | [中文](providers.zh.md)
+
 Most hosted providers support one or both of these authentication methods:
 
 - Sign in through a browser or device flow backed by OAuth.

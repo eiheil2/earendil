@@ -1,0 +1,16 @@
+# Bilingual-pair consistency record: one entry per heading section, holding the hash of the
+# English and the Chinese prose in that section. Code fences are excluded because they must be
+# byte-identical on both sides. After editing either side, bring the other along and re-record:
+#   node scripts/verify-doc-bilingual.mjs --write <pair>
+/configuration:
+  en: b81ed1537f8684bf
+  zh: cd0bc70255e45bbc
+/agent-directory:
+  en: b081e8a468190b81
+  zh: b5a9a57692df87eb
+/project-pi-directory:
+  en: 9af16b5222320c78
+  zh: 404882294f012027
+/context-files:
+  en: 9eb917476476fb8b
+  zh: 494db3d1e91eb663

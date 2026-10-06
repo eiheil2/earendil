@@ -1,0 +1,5 @@
+{
+	"defaultWordCeiling": 3200,
+	"defaultByteCeiling": 32768,
+	"overrides": {}
+}

@@ -6,6 +6,7 @@ import { type Static, Type } from "typebox";
 import { processImage } from "../../utils/image-process.ts";
 import { detectSupportedImageMimeTypeFromFile } from "../../utils/mime.ts";
 import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
+import { resolvePiDocsUrl } from "../pi-protocol.ts";
 import { resolveReadPathAsync } from "./path-utils.ts";
 import { readRenderers } from "./renderers/read.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
@@ -100,6 +101,19 @@ export function createReadToolDefinition(
 
 					(async () => {
 						try {
+							if (path.startsWith("pi://")) {
+								const resolved = await resolvePiDocsUrl(path);
+								const truncation = truncateHead(resolved.content);
+								const outputText = truncation.truncated
+									? `${truncation.content}\n\n[Documentation truncated. Use a narrower pi:// URL or offset/limit.]`
+									: truncation.content;
+								resolve({
+									content: [{ type: "text", text: outputText }],
+									details: truncation.truncated ? { truncation } : undefined,
+								});
+								signal?.removeEventListener("abort", onAbort);
+								return;
+							}
 							const absolutePath = await resolveReadPathAsync(path, ctx?.cwd || cwd);
 							if (aborted) return;
 							// Check if file exists and is readable.
