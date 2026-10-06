@@ -35,19 +35,25 @@ const home = join(sandbox, "home");
 const agentDir = join(sandbox, "agent");
 
 function run(args, env = {}) {
-	const result = spawnSync(command, commandArgs.concat(args), {
-		encoding: "utf8",
-		shell: process.platform === "win32",
-		env: {
-			...process.env,
-			HOME: home,
-			USERPROFILE: home,
-			PI_CODING_AGENT_DIR: agentDir,
-			PI_SKIP_VERSION_CHECK: "1",
-			...env,
-		},
-	});
-	return result;
+	const childEnv = {
+		...process.env,
+		HOME: home,
+		USERPROFILE: home,
+		PI_CODING_AGENT_DIR: agentDir,
+		PI_SKIP_VERSION_CHECK: "1",
+		...env,
+	};
+	// A .cmd launcher needs a shell on Windows, but node 26 deprecates passing an
+	// argv array alongside shell:true (DEP0190: args are concatenated, unescaped).
+	// Pass one pre-quoted command line instead; quoting also makes spaced paths work,
+	// which the unquoted concatenation would silently split.
+	if (process.platform === "win32") {
+		const line = [command, ...commandArgs, ...args]
+			.map((part) => (/[\s"]/u.test(part) ? `"${part.replace(/"/g, '""')}"` : part))
+			.join(" ");
+		return spawnSync(line, { encoding: "utf8", shell: true, env: childEnv });
+	}
+	return spawnSync(command, [...commandArgs, ...args], { encoding: "utf8", env: childEnv });
 }
 
 function check(name, ok, detail = "") {
