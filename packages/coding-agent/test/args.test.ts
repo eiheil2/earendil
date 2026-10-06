@@ -1,5 +1,9 @@
 import { describe, expect, test } from "vitest";
 import { normalizeSessionName, parseArgs } from "../src/cli/args.ts";
+import { ROOT_FLAGS, SUBCOMMANDS } from "../src/cli/cli-metadata.ts";
+import { generateCompletion } from "../src/cli/completion-gen.ts";
+import { parseCompletionsArgs } from "../src/cli/completions-command.ts";
+import { parseDoctorArgs } from "../src/cli/doctor-args.ts";
 
 describe("parseArgs", () => {
 	describe("--version flag", () => {
@@ -548,5 +552,137 @@ describe("parseArgs", () => {
 			expect(result.fileArgs).toEqual(["prompt.md"]);
 			expect(result.messages).toEqual(["Do the task"]);
 		});
+	});
+});
+
+describe("completions", () => {
+	describe("parseCompletionsArgs", () => {
+		test("is undefined for non-completions argv", () => {
+			expect(parseCompletionsArgs([])).toBeUndefined();
+			expect(parseCompletionsArgs(["--help"])).toBeUndefined();
+			expect(parseCompletionsArgs(["list"])).toBeUndefined();
+		});
+
+		test("parses a valid shell argument", () => {
+			expect(parseCompletionsArgs(["completions", "bash"])).toEqual({ kind: "script", shell: "bash" });
+			expect(parseCompletionsArgs(["completions", "zsh"])).toEqual({ kind: "script", shell: "zsh" });
+			expect(parseCompletionsArgs(["completions", "fish"])).toEqual({ kind: "script", shell: "fish" });
+		});
+
+		test("rejects an unknown shell", () => {
+			const result = parseCompletionsArgs(["completions", "powershell"]);
+			expect(result).toEqual({ kind: "error", message: expect.stringContaining('Unknown shell "powershell"') });
+		});
+
+		test("rejects missing or extra arguments", () => {
+			expect(parseCompletionsArgs(["completions"])).toEqual({
+				kind: "error",
+				message: expect.stringContaining("Usage:"),
+			});
+			expect(parseCompletionsArgs(["completions", "bash", "zsh"])).toEqual({
+				kind: "error",
+				message: expect.stringContaining("Usage:"),
+			});
+		});
+
+		test("--help is not an error", () => {
+			expect(parseCompletionsArgs(["completions", "--help"])).toEqual({ kind: "help" });
+		});
+	});
+
+	describe("generateCompletion", () => {
+		test("every registered subcommand appears in every shell's script", () => {
+			for (const shell of ["bash", "zsh", "fish"] as const) {
+				const script = generateCompletion(shell);
+				for (const command of SUBCOMMANDS) {
+					expect(script).toContain(command.name);
+				}
+			}
+		});
+
+		test("every registered root flag appears in the bash and zsh scripts", () => {
+			for (const shell of ["bash", "zsh", "fish"] as const) {
+				const script = generateCompletion(shell);
+				for (const flag of ROOT_FLAGS) {
+					expect(script).toMatch(new RegExp(`(--?|-l )${flag.name}(\\D|$)`));
+				}
+			}
+		});
+
+		test("enum flags bake in their metadata-declared values", () => {
+			const thinking = ROOT_FLAGS.find((flag) => flag.name === "thinking");
+			expect(thinking?.values).toContain("xhigh");
+			const script = generateCompletion("bash");
+			for (const value of thinking?.values ?? []) {
+				expect(script).toContain(value);
+			}
+		});
+	});
+
+	describe("metadata/parser contract", () => {
+		test("every root flag in the metadata parses into its declared kind", () => {
+			for (const flag of ROOT_FLAGS) {
+				const argv =
+					flag.kind === "flag"
+						? [`--${flag.name}`]
+						: [`--${flag.name}`, flag.kind === "enum" ? (flag.values?.[0] ?? "x") : "value"];
+				const result = parseArgs(argv);
+				expect(result.diagnostics.filter((d) => d.type === "error")).toEqual([]);
+			}
+		});
+
+		test("the completions subcommand is listed in the metadata", () => {
+			expect(SUBCOMMANDS.map((command) => command.name)).toContain("completions");
+		});
+	});
+});
+
+describe("doctor subcommand", () => {
+	test("parseDoctorArgs ignores argv that does not start with doctor", () => {
+		expect(parseDoctorArgs([])).toBeUndefined();
+		expect(parseDoctorArgs(["--help"])).toBeUndefined();
+		expect(parseDoctorArgs(["list"])).toBeUndefined();
+		expect(parseArgs(["hello", "doctor"]).doctor).toBeUndefined();
+	});
+
+	test("plain doctor invocation runs with default options", () => {
+		expect(parseDoctorArgs(["doctor"])).toEqual({ kind: "run", options: {} });
+	});
+
+	test("accepts --approve/-a and --no-extensions/-ne", () => {
+		expect(parseDoctorArgs(["doctor", "--approve"])).toEqual({
+			kind: "run",
+			options: { projectTrusted: true },
+		});
+		expect(parseDoctorArgs(["doctor", "-a", "-ne"])).toEqual({
+			kind: "run",
+			options: { projectTrusted: true, noExtensions: true },
+		});
+	});
+
+	test("--help short-circuits to the help invocation", () => {
+		expect(parseDoctorArgs(["doctor", "--help"])).toEqual({ kind: "help" });
+		expect(parseDoctorArgs(["doctor", "-h"])).toEqual({ kind: "help" });
+	});
+
+	test("an unknown argument becomes an error invocation naming the argument", () => {
+		const result = parseDoctorArgs(["doctor", "bogus"]);
+		expect(result?.kind).toBe("error");
+		expect(result && "message" in result ? result.message : "").toContain("bogus");
+	});
+
+	test("parseArgs intercepts doctor before the flag loop, so 'doctor' is not a message", () => {
+		const result = parseArgs(["doctor", "--approve"]);
+		expect(result.doctor).toEqual({ kind: "run", options: { projectTrusted: true } });
+		expect(result.messages).toEqual([]);
+		expect(result.diagnostics).toEqual([]);
+	});
+
+	test("parseDoctorArgs stays pure: it never reads argv outside its own slice", () => {
+		const args = ["doctor", "--no-extensions"];
+		const first = parseDoctorArgs(args);
+		const second = parseDoctorArgs(args);
+		expect(first).toEqual(second);
+		expect(args).toEqual(["doctor", "--no-extensions"]);
 	});
 });

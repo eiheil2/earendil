@@ -7,6 +7,8 @@ import chalk from "chalk";
 import { APP_NAME, CONFIG_DIR_NAME, ENV_AGENT_DIR, ENV_SESSION_DIR } from "../config.ts";
 import type { ExtensionFlag } from "../core/extensions/types.ts";
 import type { TuiMode } from "../core/settings-manager.ts";
+import { parseCompletionsArgs, runCompletionsCommand } from "./completions-command.ts";
+import { type DoctorInvocation, parseDoctorArgs } from "./doctor-args.ts";
 
 export type Mode = "text" | "json" | "rpc";
 
@@ -52,6 +54,11 @@ export interface Args {
 	tuiMode?: TuiMode;
 	verbose?: boolean;
 	projectTrustOverride?: boolean;
+	/**
+	 * `pi doctor` invocation. Set instead of `messages` when argv starts with
+	 * the subcommand; main.ts dispatches it before any mode is chosen.
+	 */
+	doctor?: DoctorInvocation;
 	messages: string[];
 	fileArgs: string[];
 	/** Unknown flags (potentially extension flags) - map of flag name to value */
@@ -71,6 +78,28 @@ export function normalizeSessionName(value: string): string | undefined {
 }
 
 export function parseArgs(args: string[]): Args {
+	// `pi completions <shell>` is a subcommand, not a flag set. pi has no central
+	// command registry (subcommands dispatch across main.ts / package-manager-cli /
+	// auth-command), so it is intercepted at the parser surface and dispatched.
+	// Without this, "completions" would parse as a message token and the process
+	// would fall through to interactive mode.
+	if (parseCompletionsArgs(args) !== undefined) {
+		process.exit(runCompletionsCommand(args));
+	}
+
+	// `pi doctor` likewise: intercept before the flag loop so "doctor" is never
+	// swallowed as a message token. The report is written by main.ts.
+	const doctor = parseDoctorArgs(args);
+	if (doctor !== undefined) {
+		return {
+			messages: [],
+			fileArgs: [],
+			unknownFlags: new Map(),
+			diagnostics: [],
+			doctor,
+		};
+	}
+
 	const result: Args = {
 		messages: [],
 		fileArgs: [],
@@ -290,7 +319,9 @@ ${chalk.bold("Commands:")}
   ${APP_NAME} config [-l]               Open TUI to enable/disable package resources (Tab switches scope)
   ${APP_NAME} auth <command>            Print credentials or check provider readiness
   ${APP_NAME} mcp <command>             Check MCP servers, sign in to or out of OAuth servers
-  ${APP_NAME} <command> --help          Show help for install/remove/uninstall/update/list/config/auth/mcp
+  ${APP_NAME} completions <shell>       Print shell completion script (bash|zsh|fish)
+  ${APP_NAME} doctor [--approve]         Print a pasteable diagnostic report (redacted)
+  ${APP_NAME} <command> --help          Show help for install/remove/uninstall/update/list/config/auth/mcp/doctor
 
 ${chalk.bold("Options:")}
   --provider <name>              Provider to search for --model (requires --model)

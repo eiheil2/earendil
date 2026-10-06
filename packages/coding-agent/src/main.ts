@@ -27,6 +27,7 @@ import {
 	validateAuthCommandArgs,
 } from "./cli/auth-command.ts";
 import { resolveCredentialForPrint } from "./cli/credential-print.ts";
+import { runDoctorCommand } from "./cli/doctor-command.ts";
 import { processFileArguments } from "./cli/file-processor.ts";
 import { buildInitialMessage } from "./cli/initial-message.ts";
 import { listModels } from "./cli/list-models.ts";
@@ -42,6 +43,14 @@ import {
 } from "./core/agent-session-services.ts";
 import { formatNoModelsAvailableMessage } from "./core/auth-guidance.ts";
 import { AuthStorage, ReadOnlyAuthStorage } from "./core/auth-storage.ts";
+import {
+	DOCTOR_REMEDY,
+	type ErrorRemedy,
+	HELP_REMEDY,
+	reportUserError,
+	reportUserHint,
+	reportUserWarning,
+} from "./core/error-render.ts";
 import { exportFromFile } from "./core/export-html/index.ts";
 import type { InlineExtension } from "./core/extensions/types.ts";
 import { applyHttpProxySettings, configureHttpDispatcher } from "./core/http-dispatcher.ts";
@@ -59,6 +68,7 @@ import {
 import { assertValidSessionId, SessionManager } from "./core/session-manager.ts";
 import { collectSettingsDiagnostics, deduplicateDiagnostics } from "./core/settings-diagnostics.ts";
 import { SettingsManager } from "./core/settings-manager.ts";
+import { reportStartupFailure } from "./core/startup-diagnostics.ts";
 import { printTimings, resetTimings, time } from "./core/timings.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "./core/trust-manager.ts";
 import { builtInExtensions } from "./extensions/index.ts";
@@ -72,6 +82,22 @@ import { isLocalPath, normalizePath, resolvePath } from "./utils/paths.ts";
 import { cleanupWindowsSelfUpdateQuarantine } from "./utils/windows-self-update.ts";
 
 const EXTENSION_LOAD_FAILURE_HINT = `Hint: Start without extensions using "${APP_NAME} -ne".`;
+
+/** Actionable next step for an extension load failure (also quoted by the hint above). */
+const NO_EXTENSIONS_STEP = `Start without extensions using "${APP_NAME} -ne"`;
+
+/**
+ * Next step for a startup diagnostic.
+ *
+ * Extension failures have the documented bypass; usage errors are answered by
+ * help; everything else points at `pi doctor`, which prints the self-check and
+ * the recent-error tail for the current install.
+ */
+function remedyForDiagnostic(message: string): ErrorRemedy {
+	if (message.includes("Failed to load extension")) return { nextStep: NO_EXTENSIONS_STEP };
+	if (message.startsWith("--")) return HELP_REMEDY;
+	return DOCTOR_REMEDY;
+}
 
 /**
  * Read all content from piped stdin.
@@ -98,10 +124,25 @@ async function readPipedStdin(): Promise<string | undefined> {
 
 function reportDiagnostics(diagnostics: readonly AgentSessionRuntimeDiagnostic[]): void {
 	for (const diagnostic of diagnostics) {
-		const color = diagnostic.type === "error" ? chalk.red : diagnostic.type === "warning" ? chalk.yellow : chalk.dim;
-		const prefix = diagnostic.type === "error" ? "Error: " : diagnostic.type === "warning" ? "Warning: " : "";
-		console.error(color(`${prefix}${diagnostic.message}`));
+		if (diagnostic.type === "error") {
+			reportUserError({ message: diagnostic.message, remedy: remedyForDiagnostic(diagnostic.message) });
+		} else if (diagnostic.type === "warning") {
+			reportUserWarning({ message: diagnostic.message, remedy: remedyForDiagnostic(diagnostic.message) });
+		} else {
+			// Informational startup notes are not errors; they stay unprefixed.
+			console.error(chalk.dim(diagnostic.message));
+		}
 	}
+}
+
+/**
+ * Save the full startup failure to a private 0600 file under the agent
+ * directory and echo its path (AC-F04); a failed write prints the report
+ * instead. The terminal only ever sees the short reason plus that path.
+ */
+async function saveStartupDiagnostics(phase: string, details: readonly string[]): Promise<void> {
+	const failure = Object.assign(new Error(`${details.length} startup error(s)`), { details: [...details] });
+	await reportStartupFailure(failure, { home: getAgentDir(), phase });
 }
 
 function isTruthyEnvFlag(value: string | undefined): boolean {
@@ -141,7 +182,7 @@ async function runAuthCommand(args: string[]): Promise<boolean> {
 		command = parseAuthCommand(args);
 	} catch (error) {
 		const message = error instanceof AuthCommandError ? error.message : "Failed to parse auth command";
-		console.error(chalk.red(`Error: ${message}`));
+		reportUserError({ message, remedy: { nextStep: `${APP_NAME} auth --help` } });
 		process.exitCode = 1;
 		return true;
 	}
@@ -150,8 +191,10 @@ async function runAuthCommand(args: string[]): Promise<boolean> {
 	const parsed = parseArgs(command.args);
 	if (parsed.unknownFlags.size > 0) {
 		const option = parsed.unknownFlags.keys().next().value;
-		console.error(chalk.red(`Unknown option --${option} for "${getAuthCommandName(command.kind)}".`));
-		console.error(chalk.dim(`Use "${APP_NAME} --help" or "${getAuthCommandUsage(command.kind)}".`));
+		reportUserError({
+			message: `Unknown option --${option} for "${getAuthCommandName(command.kind)}".`,
+			remedy: { nextStep: `"${APP_NAME} --help" or "${getAuthCommandUsage(command.kind)}"` },
+		});
 		process.exitCode = 1;
 		return true;
 	}
@@ -202,7 +245,10 @@ async function runAuthCommand(args: string[]): Promise<boolean> {
 		process.exitCode = result.status === "ready" ? 0 : result.status === "not_ready" ? 1 : 2;
 	} catch (error) {
 		const message = error instanceof AuthCommandError ? error.message : "Failed to resolve credential";
-		console.error(chalk.red(`Error: ${message}`));
+		reportUserError({
+			message,
+			remedy: { nextStep: `"${APP_NAME} auth check --provider <provider>"` },
+		});
 		process.exitCode = command.kind === "check" ? 2 : 1;
 	}
 	return true;
@@ -307,7 +353,12 @@ function validateForkFlags(parsed: Args): void {
 	].filter((flag): flag is string => flag !== undefined);
 
 	if (conflictingFlags.length > 0) {
-		console.error(chalk.red(`Error: --fork cannot be combined with ${conflictingFlags.join(", ")}`));
+		reportUserError({
+			message: `--fork cannot be combined with ${conflictingFlags.join(", ")}`,
+			remedy: {
+				nextStep: `Re-run without ${conflictingFlags.join(", ")}; --fork replaces --session/--continue/--resume`,
+			},
+		});
 		process.exit(1);
 	}
 }
@@ -322,7 +373,12 @@ function validateSessionIdFlags(parsed: Args): void {
 	].filter((flag): flag is string => flag !== undefined);
 
 	if (conflictingFlags.length > 0) {
-		console.error(chalk.red(`Error: --session-id cannot be combined with ${conflictingFlags.join(", ")}`));
+		reportUserError({
+			message: `--session-id cannot be combined with ${conflictingFlags.join(", ")}`,
+			remedy: {
+				nextStep: `Re-run without ${conflictingFlags.join(", ")}; --session-id names the session to open or create`,
+			},
+		});
 		process.exit(1);
 	}
 
@@ -330,7 +386,10 @@ function validateSessionIdFlags(parsed: Args): void {
 		assertValidSessionId(parsed.sessionId);
 	} catch (error: unknown) {
 		const message = error instanceof Error ? error.message : String(error);
-		console.error(chalk.red(`Error: ${message}`));
+		reportUserError({
+			message,
+			remedy: { nextStep: `Pass a valid session id, or pick one with "${APP_NAME} --resume"` },
+		});
 		process.exit(1);
 	}
 }
@@ -339,8 +398,10 @@ function openSessionOrExit(path: string, sessionDir?: string): SessionManager {
 	try {
 		return SessionManager.open(path, sessionDir);
 	} catch (error: unknown) {
-		const message = error instanceof Error ? error.message : String(error);
-		console.error(chalk.red(`Error: ${message}`));
+		reportUserError({
+			message: error instanceof Error ? error.message : String(error),
+			remedy: { nextStep: `Verify ${path} is readable, then re-run with --session <path>` },
+		});
 		process.exit(1);
 	}
 }
@@ -349,8 +410,10 @@ function forkSessionOrExit(sourcePath: string, cwd: string, sessionDir?: string,
 	try {
 		return SessionManager.forkFrom(sourcePath, cwd, sessionDir, { id: sessionId });
 	} catch (error: unknown) {
-		const message = error instanceof Error ? error.message : String(error);
-		console.error(chalk.red(`Error: ${message}`));
+		reportUserError({
+			message: error instanceof Error ? error.message : String(error),
+			remedy: { nextStep: `Verify ${sourcePath} is readable, then re-run with --fork <path>` },
+		});
 		process.exit(1);
 	}
 }
@@ -369,7 +432,12 @@ export async function createSessionManager(
 		if (parsed.sessionId) {
 			const existingTarget = findLocalSessionByExactId(parsed.sessionId, cwd, sessionDir);
 			if (existingTarget) {
-				console.error(chalk.red(`Session already exists with id '${parsed.sessionId}'`));
+				reportUserError({
+					message: `Session already exists with id '${parsed.sessionId}'`,
+					remedy: {
+						nextStep: `Omit --session-id to get a new id, or open the existing one with --session-id ${parsed.sessionId}`,
+					},
+				});
 				process.exit(1);
 			}
 		}
@@ -383,7 +451,12 @@ export async function createSessionManager(
 				return forkSessionOrExit(resolved.path, cwd, sessionDir, parsed.sessionId);
 
 			case "not_found":
-				console.error(chalk.red(`No session found matching '${resolved.arg}'`));
+				reportUserError({
+					message: `No session found matching '${resolved.arg}'`,
+					remedy: {
+						nextStep: `List sessions with "${APP_NAME} --resume", or pass the session file path directly`,
+					},
+				});
 				process.exit(1);
 		}
 	}
@@ -407,7 +480,12 @@ export async function createSessionManager(
 			}
 
 			case "not_found":
-				console.error(chalk.red(`No session found matching '${resolved.arg}'`));
+				reportUserError({
+					message: `No session found matching '${resolved.arg}'`,
+					remedy: {
+						nextStep: `List sessions with "${APP_NAME} --resume", or pass the session file path directly`,
+					},
+				});
 				process.exit(1);
 		}
 	}
@@ -438,11 +516,10 @@ export async function createSessionManager(
 		if (existingSession) {
 			return SessionManager.open(existingSession.path, sessionDir);
 		}
-		console.error(
-			chalk.yellow(
-				`Warning: No project session found with id '${parsed.sessionId}'; creating a new session with that id.`,
-			),
-		);
+		reportUserWarning({
+			message: `No project session found with id '${parsed.sessionId}'; creating a new session with that id.`,
+			remedy: { nextStep: `Pick an existing session instead with "${APP_NAME} --resume"` },
+		});
 	}
 
 	return SessionManager.create(cwd, sessionDir, { id: parsed.sessionId });
@@ -618,10 +695,17 @@ export async function main(args: string[], options?: MainOptions) {
 	}
 
 	const parsed = parseArgs(args);
+	if (parsed.doctor !== undefined) {
+		process.exitCode = await runDoctorCommand(parsed.doctor);
+		return;
+	}
 	if (parsed.diagnostics.length > 0) {
 		for (const d of parsed.diagnostics) {
-			const color = d.type === "error" ? chalk.red : chalk.yellow;
-			console.error(color(`${d.type === "error" ? "Error" : "Warning"}: ${d.message}`));
+			if (d.type === "error") {
+				reportUserError({ message: d.message, remedy: HELP_REMEDY });
+			} else {
+				reportUserWarning({ message: d.message, remedy: HELP_REMEDY });
+			}
 		}
 		if (parsed.diagnostics.some((d) => d.type === "error")) {
 			process.exit(1);
@@ -640,8 +724,11 @@ export async function main(args: string[], options?: MainOptions) {
 			const outputPath = parsed.messages.length > 0 ? parsed.messages[0] : undefined;
 			result = await exportFromFile(parsed.export, outputPath);
 		} catch (error: unknown) {
-			const message = error instanceof Error ? error.message : "Failed to export session";
-			console.error(chalk.red(`Error: ${message}`));
+			reportUserError({
+				message: error instanceof Error ? error.message : "Failed to export session",
+				cause: error,
+				remedy: { nextStep: `Check that ${parsed.export} exists and is a session file, then re-run --export` },
+			});
 			process.exit(1);
 		}
 		console.log(`Exported to: ${result}`);
@@ -655,7 +742,10 @@ export async function main(args: string[], options?: MainOptions) {
 	}
 
 	if (parsed.mode === "rpc" && parsed.fileArgs.length > 0) {
-		console.error(chalk.red("Error: @file arguments are not supported in RPC mode"));
+		reportUserError({
+			message: "@file arguments are not supported in RPC mode",
+			remedy: { nextStep: `Drop --mode rpc, or send the file contents in the JSON-RPC request instead of @files` },
+		});
 		process.exit(1);
 	}
 
@@ -706,14 +796,22 @@ export async function main(args: string[], options?: MainOptions) {
 			}
 			sessionManager = SessionManager.open(missingSessionCwdIssue.sessionFile!, sessionDir, selectedCwd);
 		} else {
-			console.error(chalk.red(new MissingSessionCwdError(missingSessionCwdIssue).message));
+			reportUserError({
+				message: new MissingSessionCwdError(missingSessionCwdIssue).message,
+				remedy: {
+					nextStep: `Run ${APP_NAME} without --mode/--print to choose the working directory interactively`,
+				},
+			});
 			process.exit(1);
 		}
 	}
 	if (parsed.name !== undefined) {
 		const name = normalizeSessionName(parsed.name);
 		if (name === undefined) {
-			console.error(chalk.red("Error: --name requires a non-empty value"));
+			reportUserError({
+				message: "--name requires a non-empty value",
+				remedy: { nextStep: `Pass --name "<name>", for example --name "bugfix"` },
+			});
 			process.exit(1);
 		}
 		sessionManager.appendSessionInfo(name);
@@ -924,20 +1022,32 @@ export async function main(args: string[], options?: MainOptions) {
 	}
 	if (hasRuntimeErrors) {
 		if (runtime.diagnostics.some((diagnostic) => diagnostic.message.includes("Failed to load extension"))) {
-			console.error(chalk.yellow(EXTENSION_LOAD_FAILURE_HINT));
+			reportUserHint(EXTENSION_LOAD_FAILURE_HINT);
 		}
+		await saveStartupDiagnostics(
+			"startup",
+			startupDiagnostics.filter((diagnostic) => diagnostic.type === "error").map((d) => d.message),
+		);
 		process.exit(1);
 	}
 	time("createAgentSession");
 
 	if (appMode !== "interactive" && !session.model) {
-		console.error(chalk.red(formatNoModelsAvailableMessage()));
+		reportUserError({
+			message: formatNoModelsAvailableMessage(),
+			remedy: {
+				nextStep: `Start ${APP_NAME} interactively and run /login, or export a provider API key (paths above)`,
+			},
+		});
 		process.exit(1);
 	}
 
 	const startupBenchmark = isTruthyEnvFlag(process.env.PI_STARTUP_BENCHMARK);
 	if (startupBenchmark && appMode !== "interactive") {
-		console.error(chalk.red("Error: PI_STARTUP_BENCHMARK only supports interactive mode"));
+		reportUserError({
+			message: "PI_STARTUP_BENCHMARK only supports interactive mode",
+			remedy: { nextStep: `Unset PI_STARTUP_BENCHMARK, or re-run without --mode/--print` },
+		});
 		process.exit(1);
 	}
 

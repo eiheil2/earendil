@@ -1,4 +1,5 @@
 import chalk from "chalk";
+import { DOCTOR_REMEDY, reportUserError, reportUserWarning } from "../core/error-render.ts";
 import type { ProjectTrustContext } from "../core/extensions/types.ts";
 import type { AppMode } from "../core/project-trust.ts";
 import type { SettingsManager } from "../core/settings-manager.ts";
@@ -53,8 +54,13 @@ export function createProjectTrustContext(options: {
 			},
 			notify: (message, type = "info") => {
 				if (options.mode !== "interactive") {
-					const color = type === "error" ? chalk.red : type === "warning" ? chalk.yellow : chalk.cyan;
-					console.error(color(message));
+					if (type === "error") {
+						reportUserError({ message, remedy: DOCTOR_REMEDY });
+					} else if (type === "warning") {
+						reportUserWarning({ message, remedy: DOCTOR_REMEDY });
+					} else {
+						console.error(chalk.cyan(message));
+					}
 				}
 			},
 		},

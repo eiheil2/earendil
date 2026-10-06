@@ -127,7 +127,14 @@ describe("--session-id", () => {
 		const sessionDir = join(tempRoot, "sessions");
 		mkdirSync(projectDir, { recursive: true });
 		const settingsManager = SettingsManager.inMemory();
+		// Warnings are rendered by the unified pipeline, which writes to stderr.
 		const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+		const stderrWrite = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+		const printed = () =>
+			[
+				...consoleError.mock.calls.map(([message]) => String(message)),
+				...stderrWrite.mock.calls.map(([chunk]) => String(chunk)),
+			].join("\n");
 
 		const readOnly = await createSessionManager(
 			args({ sessionId: "read-only", help: true }),
@@ -145,9 +152,10 @@ describe("--session-id", () => {
 			settingsManager,
 		);
 		persistSession(created, "persist me");
-		expect(consoleError).toHaveBeenCalledWith(expect.stringContaining("creating a new session"));
+		expect(printed()).toContain("creating a new session");
 
 		consoleError.mockClear();
+		stderrWrite.mockClear();
 		const reopened = await createSessionManager(
 			args({ sessionId: "persisted-id" }),
 			projectDir,
@@ -155,7 +163,7 @@ describe("--session-id", () => {
 			settingsManager,
 		);
 		expect(reopened.getSessionFile()).toBe(created.getSessionFile());
-		expect(consoleError).not.toHaveBeenCalled();
+		expect(printed()).toBe("");
 	});
 
 	// Regression test for #9440.

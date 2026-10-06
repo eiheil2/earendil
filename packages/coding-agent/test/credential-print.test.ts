@@ -68,15 +68,15 @@ describe("credential print commands", () => {
 
 	test("reports unknown auth options like package commands", async () => {
 		const originalExitCode = process.exitCode;
-		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+		// Errors are rendered by the unified pipeline, which writes to stderr
+		// directly (it must not touch stdout, and it mirrors into the log).
+		const errorSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
 		try {
 			process.exitCode = undefined;
 			await main(["auth", "check", "--provider", "openai-codex", "--credentails"]);
 			const stderr = errorSpy.mock.calls.map(([message]) => String(message)).join("\n");
 			expect(stderr).toContain('Unknown option --credentails for "auth check".');
-			expect(stderr).toContain(
-				'Use "pi --help" or "pi auth check --provider <provider> [--json] [--credentials] [--no-refresh]".',
-			);
+			expect(stderr).toContain('Next step: "pi --help" or "pi auth check --provider <provider>');
 			expect(process.exitCode).toBe(1);
 		} finally {
 			process.exitCode = originalExitCode;

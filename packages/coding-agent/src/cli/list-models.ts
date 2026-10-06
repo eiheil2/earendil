@@ -4,8 +4,9 @@
 
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { fuzzyFilter } from "@earendil-works/pi-tui";
-import chalk from "chalk";
+import { APP_NAME, getModelsPath } from "../config.ts";
 import { formatNoModelsAvailableMessage } from "../core/auth-guidance.ts";
+import { reportUserWarning } from "../core/error-render.ts";
 import type { ModelRuntime } from "../core/model-runtime.ts";
 
 /**
@@ -33,7 +34,10 @@ export async function listModels(
 ): Promise<void> {
 	const loadError = modelRuntime.getError();
 	if (loadError) {
-		console.error(chalk.yellow(`Warning: errors loading models.json:\n${loadError}`));
+		reportUserWarning({
+			message: `errors loading models.json:\n${String(loadError)}`,
+			remedy: { nextStep: `Fix ${getModelsPath()} (JSON syntax), then re-run "${APP_NAME} --list-models"` },
+		});
 	}
 
 	const models = [...(await modelRuntime.getAvailable(undefined, { signal }))];
