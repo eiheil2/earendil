@@ -59,10 +59,10 @@ async function withTimeout<T>(promise: Promise<T>, label: string, ms = 5_000): P
 }
 
 describe("setup wizard gates", () => {
-	it("orders scenes credentials → model → appearance", () => {
+	it("orders scenes inherit → credentials → model → appearance", () => {
 		expect(
 			selectSetupScenes({ version: 0, completedScenes: [] }, { isTTY: true, skipEnv: undefined }).map((s) => s.id),
-		).toEqual(["credentials", "model", "appearance"]);
+		).toEqual(["inherit", "credentials", "model", "appearance"]);
 	});
 
 	it("hides the wizard without a TTY (AC-B04)", () => {
@@ -77,8 +77,8 @@ describe("setup wizard gates", () => {
 		const state = { version: 0, completedScenes: [] as SetupSceneId[] };
 		expect(selectSetupScenes(state, { isTTY: true, skipEnv: "1" })).toEqual([]);
 		expect(selectSetupScenes(state, { isTTY: true, skipEnv: "true" })).toEqual([]);
-		expect(selectSetupScenes(state, { isTTY: true, skipEnv: "0" })).toHaveLength(3);
-		expect(selectSetupScenes(state, { isTTY: true, skipEnv: "no" })).toHaveLength(3);
+		expect(selectSetupScenes(state, { isTTY: true, skipEnv: "0" })).toHaveLength(4);
+		expect(selectSetupScenes(state, { isTTY: true, skipEnv: "no" })).toHaveLength(4);
 		expect(setupSkipEnvEnabled(undefined)).toBe(false);
 	});
 
@@ -95,7 +95,7 @@ describe("setup wizard gates", () => {
 			{ version: 0, completedScenes: ["credentials"] },
 			{ isTTY: true, skipEnv: undefined },
 		);
-		expect(owed.map((s) => s.id)).toEqual(["model", "appearance"]);
+		expect(owed.map((s) => s.id)).toEqual(["inherit", "model", "appearance"]);
 	});
 
 	it("keeps CURRENT_SETUP_VERSION equal to the highest scene version", () => {

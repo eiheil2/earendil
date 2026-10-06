@@ -13,11 +13,13 @@ import {
 	type WheelScrollLines,
 } from "@earendil-works/pi-tui";
 import { formatHttpIdleTimeoutMs, HTTP_IDLE_TIMEOUT_CHOICES } from "../../../core/http-dispatcher.ts";
+import { type ConfirmScope, PERMISSION_PRESETS, type PermissionPresetName } from "../../../core/permission-gate.ts";
 import {
 	CACHE_WARMING_MODES,
 	type CacheWarmingMode,
 	type DefaultProjectTrust,
 	type FullscreenExitOutput,
+	type InheritedAsset,
 	type MermaidRenderingMode,
 	type QuietStartup,
 	type TuiMode,
@@ -56,6 +58,17 @@ const DEFAULT_PROJECT_TRUST_BY_LABEL = new Map(
 	Object.entries(DEFAULT_PROJECT_TRUST_LABELS).map(([value, label]) => [label, value as DefaultProjectTrust]),
 );
 
+/** "workspace-write (destructive commands)" style one-liners for the preset row description. */
+const PERMISSION_CONFIRM_SCOPES: Record<ConfirmScope, string> = {
+	all: "every command",
+	destructive: "destructive commands",
+	none: "never",
+};
+
+const PERMISSION_PRESET_SUMMARY = PERMISSION_PRESETS.map(
+	(preset) => `${preset.name} (${PERMISSION_CONFIRM_SCOPES[preset.confirm]})`,
+).join(", ");
+
 export interface SettingsConfig {
 	autoCompact: boolean;
 	defaultModel: string;
@@ -66,6 +79,9 @@ export interface SettingsConfig {
 	autoResizeImages: boolean;
 	blockImages: boolean;
 	enableSkillCommands: boolean;
+	builtinRules?: boolean;
+	builtinSkills?: boolean;
+	builtinPrompts?: boolean;
 	steeringMode: "all" | "one-at-a-time";
 	followUpMode: "all" | "one-at-a-time";
 	transport: Transport;
@@ -90,6 +106,8 @@ export interface SettingsConfig {
 	autocompleteMaxVisible: number;
 	quietStartup: QuietStartup;
 	defaultProjectTrust: DefaultProjectTrust;
+	permissionPreset: PermissionPresetName;
+	confirmDestructive: boolean;
 	clearOnShrink: boolean;
 	showTerminalProgress: boolean;
 	tuiMode: TuiMode;
@@ -98,6 +116,7 @@ export interface SettingsConfig {
 	fullscreenCopyOnSelect: boolean;
 	fullscreenWheelScrollLines: WheelScrollLines;
 	warnings: WarningSettings;
+	inheritedAssets: readonly InheritedAsset[];
 }
 
 export interface SettingsCallbacks {
@@ -107,6 +126,9 @@ export interface SettingsCallbacks {
 	onAutoResizeImagesChange: (enabled: boolean) => void;
 	onBlockImagesChange: (blocked: boolean) => void;
 	onEnableSkillCommandsChange: (enabled: boolean) => void;
+	onBuiltinRulesChange?: (enabled: boolean) => void;
+	onBuiltinSkillsChange?: (enabled: boolean) => void;
+	onBuiltinPromptsChange?: (enabled: boolean) => void;
 	onSteeringModeChange: (mode: "all" | "one-at-a-time") => void;
 	onFollowUpModeChange: (mode: "all" | "one-at-a-time") => void;
 	onTransportChange: (transport: Transport) => void;
@@ -129,6 +151,8 @@ export interface SettingsCallbacks {
 	onAutocompleteMaxVisibleChange: (maxVisible: number) => void;
 	onQuietStartupChange: (quiet: QuietStartup) => void;
 	onDefaultProjectTrustChange: (defaultProjectTrust: DefaultProjectTrust) => void;
+	onPermissionPresetChange: (preset: PermissionPresetName) => void;
+	onConfirmDestructiveChange: (enabled: boolean) => void;
 	onClearOnShrinkChange: (enabled: boolean) => void;
 	onShowTerminalProgressChange: (enabled: boolean) => void;
 	onTuiModeChange: (mode: TuiMode) => void;
@@ -137,6 +161,7 @@ export interface SettingsCallbacks {
 	onFullscreenCopyOnSelectChange: (enabled: boolean) => void;
 	onFullscreenWheelScrollLinesChange: (lines: WheelScrollLines) => void;
 	onWarningsChange: (warnings: WarningSettings) => void;
+	onInheritedAssetToggle: (id: string, enabled: boolean) => void;
 	onCancel: () => void;
 }
 
@@ -186,6 +211,58 @@ class WarningSettingsSubmenu extends Container {
 }
 
 const CLEAR_OVERRIDE_VALUE = "__clear__";
+
+/**
+ * AC-E03: list adopted external-agent assets with a 来源 path annotation,
+ * each with a true/false disable switch persisted through the callback.
+ */
+class InheritedAssetsSubmenu extends Container {
+	private settingsList: SettingsList;
+
+	constructor(
+		assets: readonly InheritedAsset[],
+		onToggle: (id: string, enabled: boolean) => void,
+		onCancel: () => void,
+	) {
+		super();
+
+		const items: SettingItem[] =
+			assets.length === 0
+				? [
+						{
+							id: "__none__",
+							label: "Nothing adopted",
+							description: "Run the first-start discovery scene to import assets",
+							currentValue: "-",
+							values: ["-"],
+						},
+					]
+				: assets.map((asset) => ({
+						id: asset.id,
+						label: `${asset.providerName} · ${asset.kind}`,
+						description: `来源：${asset.path}`,
+						currentValue: asset.enabled ? "true" : "false",
+						values: ["true", "false"],
+					}));
+
+		this.settingsList = new SettingsList(
+			items,
+			Math.min(Math.max(items.length, 1), 10),
+			getSettingsListTheme(),
+			(id, newValue) => {
+				if (id === "__none__") return;
+				onToggle(id, newValue === "true");
+			},
+			onCancel,
+		);
+
+		this.addChild(this.settingsList);
+	}
+
+	handleInput(data: string): void {
+		this.settingsList.handleInput(data);
+	}
+}
 
 function modelSettingKey(model: Model<any>): string {
 	return `${model.provider}/${model.id}`;
@@ -573,6 +650,21 @@ export class SettingsSelectorComponent extends Container {
 				values: Object.values(DEFAULT_PROJECT_TRUST_LABELS),
 			},
 			{
+				id: "permission-preset",
+				label: "Permission preset",
+				description: `What pi asks about before acting: ${PERMISSION_PRESET_SUMMARY}`,
+				currentValue: config.permissionPreset,
+				values: PERMISSION_PRESETS.map((preset) => preset.name),
+			},
+			{
+				id: "confirm-destructive",
+				label: "Destructive confirmation",
+				description:
+					"Confirm destructive shell commands before they run; this switch turns confirmation off everywhere",
+				currentValue: config.confirmDestructive ? "true" : "false",
+				values: ["true", "false"],
+			},
+			{
 				id: "double-escape-action",
 				label: "Double-escape action",
 				description: "Action when pressing Escape twice with empty editor",
@@ -598,6 +690,24 @@ export class SettingsSelectorComponent extends Container {
 							currentWarnings = warnings;
 							callbacks.onWarningsChange(warnings);
 						},
+						() => done(),
+					),
+			},
+			{
+				id: "inherited-assets",
+				label: "Inherited assets",
+				description: "External agent config adopted from .claude, .cursor, .codex, etc.",
+				// Tolerate partial configs (older callers and tests omit the field).
+				currentValue: (() => {
+					const total = config.inheritedAssets?.length ?? 0;
+					if (total === 0) return "none";
+					const enabled = (config.inheritedAssets ?? []).filter((asset) => asset.enabled).length;
+					return `${enabled} of ${total} enabled`;
+				})(),
+				submenu: (_currentValue, done) =>
+					new InheritedAssetsSubmenu(
+						config.inheritedAssets ?? [],
+						(id, enabled) => callbacks.onInheritedAssetToggle(id, enabled),
 						() => done(),
 					),
 			},
@@ -802,6 +912,33 @@ export class SettingsSelectorComponent extends Container {
 			values: ["true", "false"],
 		});
 
+		const builtinIndex = items.findIndex((item) => item.id === "skill-commands");
+		items.splice(
+			builtinIndex + 1,
+			0,
+			{
+				id: "builtin-rules",
+				label: "Built-in rules",
+				description: "Load packaged default rules; user and project rules still take precedence",
+				currentValue: (config.builtinRules ?? true) ? "true" : "false",
+				values: ["true", "false"],
+			},
+			{
+				id: "builtin-skills",
+				label: "Built-in skills",
+				description: "Load packaged skills and their supporting scripts",
+				currentValue: (config.builtinSkills ?? true) ? "true" : "false",
+				values: ["true", "false"],
+			},
+			{
+				id: "builtin-prompts",
+				label: "Built-in prompts",
+				description: "Load packaged prompt templates",
+				currentValue: (config.builtinPrompts ?? true) ? "true" : "false",
+				values: ["true", "false"],
+			},
+		);
+
 		// Hardware cursor toggle (insert after skill-commands)
 		const skillCommandsIndex = items.findIndex((item) => item.id === "skill-commands");
 		items.splice(skillCommandsIndex + 1, 0, {
@@ -889,6 +1026,15 @@ export class SettingsSelectorComponent extends Container {
 					case "skill-commands":
 						callbacks.onEnableSkillCommandsChange(newValue === "true");
 						break;
+					case "builtin-rules":
+						callbacks.onBuiltinRulesChange?.(newValue === "true");
+						break;
+					case "builtin-skills":
+						callbacks.onBuiltinSkillsChange?.(newValue === "true");
+						break;
+					case "builtin-prompts":
+						callbacks.onBuiltinPromptsChange?.(newValue === "true");
+						break;
 					case "steering-mode":
 						callbacks.onSteeringModeChange(newValue as "all" | "one-at-a-time");
 						break;
@@ -933,6 +1079,16 @@ export class SettingsSelectorComponent extends Container {
 						}
 						break;
 					}
+					case "permission-preset": {
+						const preset = PERMISSION_PRESETS.find((entry) => entry.name === newValue);
+						if (preset) {
+							callbacks.onPermissionPresetChange(preset.name);
+						}
+						break;
+					}
+					case "confirm-destructive":
+						callbacks.onConfirmDestructiveChange(newValue === "true");
+						break;
 					case "double-escape-action":
 						callbacks.onDoubleEscapeActionChange(newValue as "fork" | "tree");
 						break;

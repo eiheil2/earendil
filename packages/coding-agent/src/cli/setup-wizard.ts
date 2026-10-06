@@ -14,10 +14,10 @@ import { stripBom } from "../utils/text.ts";
  * scene lands or an existing scene raises its `minVersion`. Must equal
  * `max(scene.minVersion)` across `SETUP_SCENES`; the setup tests guard that invariant.
  */
-export const CURRENT_SETUP_VERSION = 1;
+export const CURRENT_SETUP_VERSION = 2;
 
-/** Ordered onboarding scenes: credentials → model → appearance. */
-export const SETUP_SCENE_IDS = ["credentials", "model", "appearance"] as const;
+/** Ordered onboarding scenes: inherit → credentials → model → appearance. */
+export const SETUP_SCENE_IDS = ["inherit", "credentials", "model", "appearance"] as const;
 
 export type SetupSceneId = (typeof SETUP_SCENE_IDS)[number];
 
@@ -28,6 +28,7 @@ export interface SetupSceneDescriptor {
 
 /** Scene order fixed by AC-B05; every scene ships with the first wizard version. */
 export const SETUP_SCENES: readonly SetupSceneDescriptor[] = [
+	{ id: "inherit", minVersion: 2 },
 	{ id: "credentials", minVersion: 1 },
 	{ id: "model", minVersion: 1 },
 	{ id: "appearance", minVersion: 1 },

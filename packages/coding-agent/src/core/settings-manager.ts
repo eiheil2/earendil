@@ -14,6 +14,7 @@ import { CONFIG_DIR_NAME, getAgentDir } from "../config.ts";
 import { normalizePath, resolvePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
 import { DEFAULT_HTTP_IDLE_TIMEOUT_MS, parseHttpIdleTimeoutMs } from "./http-dispatcher.ts";
+import { type PermissionPresetName, resolvePermissionPreset } from "./permission-gate.ts";
 
 export interface CompactionModelOverride {
 	reserveTokens?: number;
@@ -130,6 +131,22 @@ export type PackageSource =
 			themes?: string[];
 	  };
 
+/** One external-agent asset the user adopted during discovery. */
+export interface InheritedAsset {
+	/** Stable id: `${provider}:${absolutePath}`. */
+	id: string;
+	/** Provider that found this asset (e.g. "claude"). */
+	provider: string;
+	/** Human-readable provider name (e.g. "Claude Code"). */
+	providerName: string;
+	kind: string;
+	/** Absolute source path; shown as 来源 in the UI. */
+	path: string;
+	level: "user" | "project";
+	/** Per-item disable switch: false means the asset is not loaded. */
+	enabled: boolean;
+}
+
 export interface Settings {
 	lastChangelogVersion?: string;
 	defaultProvider?: string;
@@ -149,6 +166,9 @@ export interface Settings {
 	shellPath?: string; // Custom shell path (e.g., for Cygwin users on Windows); supports leading ~ expansion
 	quietStartup?: QuietStartup; // default: false
 	defaultProjectTrust?: DefaultProjectTrust; // default: "ask"; global setting only
+	confirmDestructive?: boolean; // default: true - confirm destructive shell commands before they run (AC-D06)
+	permissionPreset?: PermissionPresetName; // default: "workspace-write" - three-tier approval preset (AC-D06)
+	destructiveConfirmNoticeSeen?: boolean; // default: false - the first confirmation already explained the mechanism
 	shellCommandPrefix?: string; // Prefix prepended to every bash command (e.g., "shopt -s expand_aliases" for alias support)
 	npmCommand?: string[]; // Command used for npm package lookup/install operations, argv-style (e.g., ["mise", "exec", "node@20", "--", "npm"])
 	collapseChangelog?: boolean; // Show condensed changelog after update (use /changelog for full)
@@ -188,7 +208,11 @@ export interface Settings {
 	fullscreenWheelScrollLines?: WheelScrollLines; // default: "auto"; lines per wheel event, 1-100
 	setupVersion?: number; // setup version the wizard completed; absent means "wizard never finished"
 	setupCompletedScenes?: string[]; // scenes finished inside an unfinished wizard run; cleared on completion
+	inheritedAssets?: InheritedAsset[]; // external-agent assets the user adopted; `enabled: false` disables one
 	showStartupSplash?: boolean; // default: true - startup splash before the setup scenes
+	builtinRules?: boolean; // default: true - enable packaged default rules
+	builtinSkills?: boolean; // default: true - enable packaged skills
+	builtinPrompts?: boolean; // default: true - enable packaged prompt templates
 }
 
 function isMergeableObject(value: unknown): value is Record<string, unknown> {
@@ -1111,6 +1135,41 @@ export class SettingsManager {
 		this.save();
 	}
 
+	/** Whether destructive shell commands are confirmed before they run (AC-D06; default on). */
+	getConfirmDestructive(): boolean {
+		return this.settings.confirmDestructive ?? true;
+	}
+
+	/** The one-click opt-out for destructive-command confirmation. */
+	setConfirmDestructive(confirm: boolean): void {
+		this.globalSettings.confirmDestructive = confirm;
+		this.markModified("confirmDestructive");
+		this.save();
+	}
+
+	/** The selected three-tier permission preset; unknown values fall back to the default. */
+	getPermissionPreset(): PermissionPresetName {
+		return resolvePermissionPreset(this.settings.permissionPreset).name;
+	}
+
+	setPermissionPreset(preset: PermissionPresetName): void {
+		this.globalSettings.permissionPreset = preset;
+		this.markModified("permissionPreset");
+		this.save();
+	}
+
+	/** Whether the confirmation mechanism has already been explained once (AC-D06). */
+	getDestructiveConfirmNoticeSeen(): boolean {
+		return this.settings.destructiveConfirmNoticeSeen === true;
+	}
+
+	markDestructiveConfirmNoticeSeen(): void {
+		if (this.getDestructiveConfirmNoticeSeen()) return;
+		this.globalSettings.destructiveConfirmNoticeSeen = true;
+		this.markModified("destructiveConfirmNoticeSeen");
+		this.save();
+	}
+
 	getShellCommandPrefix(): string | undefined {
 		return this.settings.shellCommandPrefix;
 	}
@@ -1266,6 +1325,31 @@ export class SettingsManager {
 
 	getEnableSkillCommands(): boolean {
 		return this.settings.enableSkillCommands ?? true;
+	}
+
+	getBuiltinRules(): boolean {
+		return this.settings.builtinRules ?? true;
+	}
+	getBuiltinSkills(): boolean {
+		return this.settings.builtinSkills ?? true;
+	}
+	getBuiltinPrompts(): boolean {
+		return this.settings.builtinPrompts ?? true;
+	}
+	setBuiltinRules(enabled: boolean): void {
+		this.globalSettings.builtinRules = enabled;
+		this.markModified("builtinRules");
+		this.save();
+	}
+	setBuiltinSkills(enabled: boolean): void {
+		this.globalSettings.builtinSkills = enabled;
+		this.markModified("builtinSkills");
+		this.save();
+	}
+	setBuiltinPrompts(enabled: boolean): void {
+		this.globalSettings.builtinPrompts = enabled;
+		this.markModified("builtinPrompts");
+		this.save();
 	}
 
 	setEnableSkillCommands(enabled: boolean): void {
@@ -1552,6 +1636,27 @@ export class SettingsManager {
 	getSetupCompletedScenes(): string[] {
 		const scenes = this.settings.setupCompletedScenes;
 		return Array.isArray(scenes) ? [...scenes] : [];
+	}
+
+	getInheritedAssets(): InheritedAsset[] {
+		const assets = this.settings.inheritedAssets;
+		return Array.isArray(assets) ? assets.map((asset) => ({ ...asset })) : [];
+	}
+
+	/** Replace the inherited-asset list; used by the setup discovery scene. */
+	setInheritedAssets(assets: InheritedAsset[]): void {
+		this.globalSettings.inheritedAssets = assets.map((asset) => ({ ...asset }));
+		this.markModified("inheritedAssets");
+		this.save();
+	}
+
+	/** Per-item disable switch; persists immediately like every other setter. */
+	setInheritedAssetEnabled(id: string, enabled: boolean): void {
+		const assets = this.getInheritedAssets();
+		const target = assets.find((asset) => asset.id === id);
+		if (!target) return;
+		target.enabled = enabled;
+		this.setInheritedAssets(assets);
 	}
 
 	/**

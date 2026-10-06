@@ -8,6 +8,8 @@
  * `startup-ui.ts` owns the TUI lifecycle, settings persistence, and the model
  * runtime it creates once for the whole run.
  */
+
+import { homedir } from "node:os";
 import type { Api, AuthEvent, AuthPrompt, Model } from "@earendil-works/pi-ai";
 import { type Component, Container, Spacer, Text, type TUI } from "@earendil-works/pi-tui";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
@@ -15,8 +17,10 @@ import { dirname, join } from "path";
 import { APP_NAME, getAuthPath, getDocsPath, getModelsPath } from "../config.ts";
 import { formatNoModelsAvailableMessage } from "../core/auth-guidance.ts";
 import { AUTH_DIR_MODE, AUTH_FILE_MODE } from "../core/auth-storage.ts";
+import { discoverAssets } from "../core/discovery/index.ts";
+import { detectFirstTaskWorkspace, getFirstTaskTemplate } from "../core/first-task-template.ts";
 import type { ModelRuntime } from "../core/model-runtime.ts";
-import type { SettingsManager } from "../core/settings-manager.ts";
+import type { InheritedAsset, SettingsManager } from "../core/settings-manager.ts";
 import { DynamicBorder } from "../modes/interactive/components/dynamic-border.ts";
 import { ExtensionInputComponent } from "../modes/interactive/components/extension-input.ts";
 import { ExtensionSelectorComponent } from "../modes/interactive/components/extension-selector.ts";
@@ -42,6 +46,8 @@ export interface SetupSceneHost {
 	readonly settingsManager: SettingsManager;
 	/** Created once per wizard run; `ModelRuntime.create()` performs no network I/O. */
 	createModelRuntime(): Promise<ModelRuntime>;
+	/** Overrides the discovery scan roots (tests); defaults to cwd + homedir. */
+	readonly discoveryContext?: { cwd: string; home: string };
 }
 
 type SetupComponent = Component & { dispose?(): void };
@@ -513,8 +519,63 @@ async function runAppearanceScene(host: SetupSceneHost): Promise<SetupSceneOutco
 	return "recorded";
 }
 
+const INHERIT_OPTIONS = ["Adopt", "Skip", "Adopt all remaining"] as const;
+type InheritOption = (typeof INHERIT_OPTIONS)[number];
+
+/**
+ * AC-E01/E02/E03: scan external agent config formats and ask per item
+ * (采纳 / 跳过 / 全部采纳) before anything is recorded. An empty scan has
+ * nothing to confirm and records the scene immediately; cancelling a non-empty
+ * chooser defers the whole scene.
+ */
+async function runInheritScene(host: SetupSceneHost): Promise<SetupSceneOutcome> {
+	const ctx = host.discoveryContext ?? { cwd: process.cwd(), home: homedir() };
+	const items = await discoverAssets(ctx);
+	if (items.length === 0) return "recorded";
+
+	const adopted: InheritedAsset[] = [];
+	let adoptRest = false;
+	for (let index = 0; index < items.length; index++) {
+		const item = items[index];
+		let choice: InheritOption | undefined;
+		if (adoptRest) {
+			choice = "Adopt";
+		} else {
+			choice = (await chooseOption(
+				host,
+				`Inherit from ${item.providerName} (${index + 1}/${items.length})`,
+				INHERIT_OPTIONS,
+				`来源：${item.path}`,
+			)) as InheritOption | undefined;
+		}
+		if (choice === undefined) return "deferred";
+		if (choice === "Skip") continue;
+		if (choice === "Adopt all remaining") adoptRest = true;
+		adopted.push({
+			id: item.id,
+			provider: item.provider,
+			providerName: item.providerName,
+			kind: item.kind,
+			path: item.path,
+			level: item.level,
+			enabled: true,
+		});
+	}
+
+	host.settingsManager.setInheritedAssets(adopted);
+	await host.settingsManager.flush();
+	await showNotice(
+		host,
+		"Inherit from other agents",
+		`${adopted.length} of ${items.length} items adopted. Review or disable them in Settings → Inherited assets.`,
+	);
+	return "recorded";
+}
+
 export async function runSetupScene(id: SetupSceneId, host: SetupSceneHost): Promise<SetupSceneOutcome> {
 	switch (id) {
+		case "inherit":
+			return runInheritScene(host);
 		case "credentials":
 			return runCredentialsScene(host);
 		case "model":
@@ -531,7 +592,7 @@ export async function runSetupScene(id: SetupSceneId, host: SetupSceneHost): Pro
 class WelcomeOutroComponent extends Container {
 	private readonly onDone: () => void;
 
-	constructor(onDone: () => void) {
+	constructor(onDone: () => void, firstTask: string) {
 		super();
 		this.onDone = onDone;
 		this.addChild(new DynamicBorder());
@@ -549,6 +610,8 @@ class WelcomeOutroComponent extends Container {
 			),
 		);
 		this.addChild(new Spacer(1));
+		this.addChild(new Text(theme.fg("muted", `First task: ${firstTask}`), 1, 0));
+		this.addChild(new Spacer(1));
 		this.addChild(new Text(theme.fg("muted", "Press any key to continue"), 1, 0));
 		this.addChild(new Spacer(1));
 		this.addChild(new DynamicBorder());
@@ -561,7 +624,11 @@ class WelcomeOutroComponent extends Container {
 
 /** One-time outro shown after every owed scene was recorded and completion stamped. */
 export function runWelcomeOutro(host: SetupSceneHost): Promise<void> {
-	return runComponent<undefined>(host, (settle) => new WelcomeOutroComponent(() => settle(undefined))).then(
+	const kind = detectFirstTaskWorkspace(host.discoveryContext?.cwd ?? process.cwd(), (directory) =>
+		existsSync(join(directory, ".git")),
+	);
+	const firstTask = getFirstTaskTemplate(kind).prompt;
+	return runComponent<undefined>(host, (settle) => new WelcomeOutroComponent(() => settle(undefined), firstTask)).then(
 		() => undefined,
 	);
 }
