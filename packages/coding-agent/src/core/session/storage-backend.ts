@@ -503,3 +503,25 @@ export class InMemorySessionStorageBackend implements SessionStorageBackend {
 
 /** Default backend: pi's existing local filesystem session storage. */
 export const defaultSessionStorageBackend: SessionStorageBackend = new LocalSessionStorageBackend();
+
+/**
+ * The backend session-manager reads and writes through. Selection is explicit and process-wide:
+ * only `setSessionStorageBackend` changes it, so sessions keep pi's exact file bytes until a
+ * caller opts into another backend (see `DshAppendOnlySessionStorageBackend`).
+ */
+let activeSessionStorageBackend: SessionStorageBackend = defaultSessionStorageBackend;
+
+/** Backend used for the next session read or write. Defaults to `defaultSessionStorageBackend`. */
+export function getSessionStorageBackend(): SessionStorageBackend {
+	return activeSessionStorageBackend;
+}
+
+/** Select the storage backend for subsequent session reads and writes. */
+export function setSessionStorageBackend(backend: SessionStorageBackend): void {
+	activeSessionStorageBackend = backend;
+}
+
+/** Restore pi's default local filesystem backend. */
+export function resetSessionStorageBackend(): void {
+	activeSessionStorageBackend = defaultSessionStorageBackend;
+}

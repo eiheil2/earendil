@@ -12,22 +12,9 @@ import {
 	uuidv7,
 } from "@earendil-works/pi-ai";
 import { randomUUID } from "crypto";
-import {
-	appendFileSync,
-	closeSync,
-	createReadStream,
-	existsSync,
-	mkdirSync,
-	openSync,
-	readdirSync,
-	readSync,
-	type Stats,
-	statSync,
-	writeFileSync,
-} from "fs";
+import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readSync, type Stats, statSync } from "fs";
 import { readdir, stat } from "fs/promises";
 import { basename, join, resolve } from "path";
-import { createInterface } from "readline";
 import { StringDecoder } from "string_decoder";
 import { APP_NAME, getAgentDir as getDefaultAgentDir, getSessionsDir } from "../config.ts";
 import { normalizePath, resolvePath } from "../utils/paths.ts";
@@ -38,6 +25,8 @@ import {
 	createCompactionSummaryMessage,
 	createCustomMessage,
 } from "./messages.ts";
+import { assertSessionHeaderLineage, decodeDshHeaderLine, isDshHeaderLine } from "./session/dsh-session-log.ts";
+import { getSessionStorageBackend } from "./session/storage-backend.ts";
 export const CURRENT_SESSION_VERSION = 3;
 
 export interface SessionHeader {
@@ -47,11 +36,27 @@ export interface SessionHeader {
 	timestamp: string;
 	cwd: string;
 	parentSession?: string;
+	/** Lineage (DSH session header): true when the session inherited a parent's history. */
+	isSeeded?: boolean;
+	/** Lineage (DSH session header): present only for sessions run as a delegated subagent. */
+	origin?: "subagent";
+	/** Lineage (DSH session header): delegation hops from the root session. */
+	delegationDepth?: number;
+	/** Lineage (DSH session header): preset the session was started with. */
+	agentPreset?: string;
 }
 
 export interface NewSessionOptions {
 	id?: string;
 	parentSession?: string;
+	/** Lineage written to the session header; see {@link SessionHeader}. */
+	isSeeded?: boolean;
+	/** Lineage written to the session header; see {@link SessionHeader}. */
+	origin?: "subagent";
+	/** Lineage written to the session header; see {@link SessionHeader}. */
+	delegationDepth?: number;
+	/** Lineage written to the session header; see {@link SessionHeader}. */
+	agentPreset?: string;
 }
 
 export interface SessionEntryBase {
@@ -601,7 +606,6 @@ export function getDefaultSessionDir(cwd: string, agentDir: string = getDefaultA
 	return sessionDir;
 }
 
-const SESSION_READ_BUFFER_SIZE = 1024 * 1024;
 const SESSION_HEADER_READ_BUFFER_SIZE = 4096;
 /** Bound synchronous header discovery while allowing large cwd and custom metadata fields. */
 const MAX_SESSION_HEADER_SCAN_BYTES = 1024 * 1024;
@@ -626,37 +630,14 @@ function parseSessionEntryLine(line: string): FileEntry | null {
 /** Exported for testing */
 export function loadEntriesFromFile(filePath: string): FileEntry[] {
 	const resolvedFilePath = normalizePath(filePath);
-	if (!existsSync(resolvedFilePath)) return [];
+	const backend = getSessionStorageBackend();
 
 	const entries: FileEntry[] = [];
-	let pending = "";
-	const fd = openSync(resolvedFilePath, "r");
-	try {
-		const decoder = new StringDecoder("utf8");
-		const buffer = Buffer.allocUnsafe(SESSION_READ_BUFFER_SIZE);
-
-		while (true) {
-			const bytesRead = readSync(fd, buffer, 0, buffer.length, null);
-			if (bytesRead === 0) break;
-
-			pending += decoder.write(buffer.subarray(0, bytesRead));
-			let lineStart = 0;
-			let newlineIndex = pending.indexOf("\n", lineStart);
-			while (newlineIndex !== -1) {
-				const entry = parseSessionEntryLine(pending.slice(lineStart, newlineIndex));
-				if (entry) entries.push(entry);
-				lineStart = newlineIndex + 1;
-				newlineIndex = pending.indexOf("\n", lineStart);
-			}
-			pending = pending.slice(lineStart);
-		}
-
-		pending += decoder.end();
-		const finalEntry = parseSessionEntryLine(pending);
-		if (finalEntry) entries.push(finalEntry);
-	} finally {
-		closeSync(fd);
-	}
+	const scan = backend.readLines(resolvedFilePath, (line) => {
+		const entry = parseSessionEntryLine(line);
+		if (entry) entries.push(entry);
+	});
+	if (scan === null) return entries;
 
 	// Validate session header before repairing the file.
 	if (entries.length === 0) return entries;
@@ -665,7 +646,7 @@ export function loadEntriesFromFile(filePath: string): FileEntry[] {
 		return [];
 	}
 
-	if (pending) appendFileSync(resolvedFilePath, "\n");
+	if (scan.unterminatedFinalLine) backend.append(resolvedFilePath, "\n", Date.now());
 	return entries;
 }
 
@@ -676,6 +657,9 @@ export function loadEntriesFromFile(filePath: string): FileEntry[] {
  */
 function parseSessionHeaderCandidate(line: string): SessionHeader | null | undefined {
 	if (!line.trim()) return undefined;
+	// A stored v4 header line (DSH's format) decodes to the pi header it wraps; an invalid one is
+	// not a session, while any other JSON line still goes through pi's own header check.
+	if (isDshHeaderLine(line)) return decodeDshHeaderLine(line);
 	const entry = parseSessionEntryLine(line);
 	if (!entry) return undefined;
 	if (entry.type !== "session" || typeof (entry as { id?: unknown }).id !== "string") return null;
@@ -796,6 +780,14 @@ function getMessageActivityTime(entry: SessionMessageEntry): number | undefined 
 	return Number.isNaN(t) ? undefined : t;
 }
 
+/** Thrown from the line scan when a file's first parsed entry is not a session header. */
+class NotASessionFileError extends Error {
+	constructor() {
+		super("first session entry is not a session header");
+		this.name = "NotASessionFileError";
+	}
+}
+
 async function buildSessionInfo(
 	filePath: string,
 	signal?: AbortSignal,
@@ -803,53 +795,54 @@ async function buildSessionInfo(
 ): Promise<SessionInfo | null> {
 	try {
 		const stats = fileStats ?? (await stat(filePath));
-		let header: SessionHeader | null = null;
+		// Written from the line callback below; the explicit union keeps the type after the scan.
+		let header: SessionHeader | null = null as SessionHeader | null;
 		let messageCount = 0;
 		let firstMessage = "";
 		const allMessages: string[] = [];
 		let name: string | undefined;
 		let lastActivityTime: number | undefined;
 
-		const rl = createInterface({
-			input: createReadStream(filePath, { encoding: "utf8", signal }),
-			crlfDelay: Infinity,
-		});
+		await getSessionStorageBackend().readLinesAsync(
+			filePath,
+			(line) => {
+				const entry = parseSessionEntryLine(line);
+				if (!entry) return;
 
-		for await (const line of rl) {
-			const entry = parseSessionEntryLine(line);
-			if (!entry) continue;
+				if (!header) {
+					// A file whose first parsed entry is not a header is not a session.
+					if (entry.type !== "session") throw new NotASessionFileError();
+					header = entry;
+					return;
+				}
 
-			if (!header) {
-				if (entry.type !== "session") return null;
-				header = entry;
-				continue;
-			}
+				// Extract session name (use latest, including explicit clears)
+				if (entry.type === "session_info") {
+					name = entry.name?.trim() || undefined;
+				}
 
-			// Extract session name (use latest, including explicit clears)
-			if (entry.type === "session_info") {
-				name = entry.name?.trim() || undefined;
-			}
+				if (entry.type !== "message") return;
+				messageCount++;
 
-			if (entry.type !== "message") continue;
-			messageCount++;
+				const activityTime = getMessageActivityTime(entry);
+				if (typeof activityTime === "number") {
+					lastActivityTime = Math.max(lastActivityTime ?? 0, activityTime);
+				}
 
-			const activityTime = getMessageActivityTime(entry);
-			if (typeof activityTime === "number") {
-				lastActivityTime = Math.max(lastActivityTime ?? 0, activityTime);
-			}
+				const message = entry.message;
+				if (!isMessageWithContent(message)) return;
+				if (message.role !== "user" && message.role !== "assistant") return;
 
-			const message = entry.message;
-			if (!isMessageWithContent(message)) continue;
-			if (message.role !== "user" && message.role !== "assistant") continue;
+				const textContent = extractTextContent(message);
+				if (!textContent) return;
 
-			const textContent = extractTextContent(message);
-			if (!textContent) continue;
-
-			allMessages.push(textContent);
-			if (!firstMessage && message.role === "user") {
-				firstMessage = textContent;
-			}
-		}
+				allMessages.push(textContent);
+				if (!firstMessage && message.role === "user") {
+					firstMessage = textContent;
+				}
+			},
+			signal,
+		);
 
 		if (!header) return null;
 
@@ -1067,7 +1060,12 @@ export class SessionManager {
 			timestamp,
 			cwd: this.cwd,
 			parentSession: options?.parentSession,
+			...(options?.isSeeded !== undefined && { isSeeded: options.isSeeded }),
+			...(options?.origin !== undefined && { origin: options.origin }),
+			...(options?.delegationDepth !== undefined && { delegationDepth: options.delegationDepth }),
+			...(options?.agentPreset !== undefined && { agentPreset: options.agentPreset }),
 		};
+		assertSessionHeaderLineage(header);
 		this.fileEntries = [header];
 		this.byId.clear();
 		this.labelsById.clear();
@@ -1123,14 +1121,11 @@ export class SessionManager {
 
 	private _rewriteFile(): void {
 		if (!this.persist || !this.sessionFile) return;
-		const fd = openSync(this.sessionFile, "w");
-		try {
-			for (const entry of this.fileEntries) {
-				writeFileSync(fd, `${JSON.stringify(entry)}\n`);
-			}
-		} finally {
-			closeSync(fd);
-		}
+		getSessionStorageBackend().writeFull(
+			this.sessionFile,
+			this.fileEntries.map((entry) => `${JSON.stringify(entry)}\n`),
+			Date.now(),
+		);
 	}
 
 	isPersisted(): boolean {
@@ -1171,20 +1166,19 @@ export class SessionManager {
 
 	_persist(entry: SessionEntry): void {
 		if (!this.persist || !this.sessionFile) return;
+		const backend = getSessionStorageBackend();
 
 		if (!this.flushed) {
 			if (!this._hasConversation()) return;
-			const fd = openSync(this.sessionFile, "wx");
-			try {
-				for (const e of this.fileEntries) {
-					writeFileSync(fd, `${JSON.stringify(e)}\n`);
-				}
-			} finally {
-				closeSync(fd);
-			}
+			backend.writeFull(
+				this.sessionFile,
+				this.fileEntries.map((e) => `${JSON.stringify(e)}\n`),
+				Date.now(),
+				null,
+			);
 			this.flushed = true;
 		} else {
-			appendFileSync(this.sessionFile, `${JSON.stringify(entry)}\n`);
+			backend.append(this.sessionFile, `${JSON.stringify(entry)}\n`, Date.now());
 		}
 	}
 
@@ -1853,14 +1847,15 @@ export class SessionManager {
 			cwd: resolvedTargetCwd,
 			parentSession: resolvedSourcePath,
 		};
-		writeFileSync(newSessionFile, `${JSON.stringify(newHeader)}\n`, { flag: "wx" });
 
-		// Copy all non-header entries from source
+		// One exclusive create: header first, then every non-header entry from the source.
+		const lines = [`${JSON.stringify(newHeader)}\n`];
 		for (const entry of sourceEntries) {
 			if (entry.type !== "session") {
-				appendFileSync(newSessionFile, `${JSON.stringify(entry)}\n`);
+				lines.push(`${JSON.stringify(entry)}\n`);
 			}
 		}
+		getSessionStorageBackend().writeFull(newSessionFile, lines, Date.now(), null);
 
 		return new SessionManager(resolvedTargetCwd, dir, newSessionFile, true);
 	}
