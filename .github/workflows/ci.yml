@@ -61,6 +61,34 @@ jobs:
       - name: MCP client conformance
         run: npm run test:mcp-conformance
 
+  # AC-A08: three install shapes (binary / source-link / tarball) must smoke-test
+  # --version, --help, one real offline session, one mock-provider session.
+  install-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build (offline model data)
+        run: npm run build:offline
+
+      # run-ci.sh compiles dist/pi itself when bun is present (Setup Bun step);
+      # otherwise the binary leg reports a skip with reasons on stderr.
+      - name: Install-shape smoke
+        run: scripts/install-tests/run-ci.sh
+
   # The extension compatibility matrix, issue #76.
   #
   # What "compatibility" means here, precisely: the plugins in

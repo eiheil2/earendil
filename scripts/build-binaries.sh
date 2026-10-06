@@ -81,6 +81,15 @@ if [[ "$OUTPUT_DIR" != /* ]]; then
     OUTPUT_DIR="$(pwd)/$OUTPUT_DIR"
 fi
 
+# Every build path (including the win32 targets) goes through `bun build
+# --compile`; fail early with a concrete message instead of an obscure
+# mid-loop error when bun is not installed.
+if ! command -v bun >/dev/null 2>&1; then
+    echo "error: bun is required to build pi binaries (including windows-* targets)." >&2
+    echo "Install it from https://bun.sh, or run this on CI where bun is provisioned." >&2
+    exit 1
+fi
+
 if [[ "$SKIP_INSTALL" == "false" ]]; then
     echo "==> Installing dependencies..."
     npm ci --ignore-scripts
