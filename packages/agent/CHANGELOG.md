@@ -5,6 +5,7 @@
 ### Added
 
 - Added the `deadline` agent option: an absolute wall-clock deadline in Unix epoch milliseconds. Each run folds it into its abort signal and aborts with a `DOMException` named `TimeoutError` once the clock passes it.
+- Added harmony-leak recovery to the agent loop: `streamAssistantResponse` is now a budgeted retry wrapper (`HARMONY_LEAK_MAX_RETRIES = 2`) that evaluates the provider gate once per turn, detects a leaked pattern in `commitAssistantMessage` before it is committed, evicts the leaked attempt from the context instead of emitting it, and escalates to a terminal error message once the budget is spent. A new `onHarmonyLeak` hook on `AgentLoopConfig`, `AgentOptions`, and `Agent` lets callers observe attempts; nongated providers never trigger it.
 
 ## [1.0.0] - 2026-10-01
 
