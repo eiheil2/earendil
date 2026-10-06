@@ -3,6 +3,7 @@ import type {
 	AssistantMessage,
 	AssistantMessageEvent,
 	AssistantMessageEventStream,
+	HarmonyDetection,
 	ImageContent,
 	JsonValue,
 	Message,
@@ -339,6 +340,29 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	 * The hook receives the agent abort signal and is responsible for honoring it.
 	 */
 	afterToolCall?: (context: AfterToolCallContext, signal?: AbortSignal) => Promise<AfterToolCallResult | undefined>;
+
+	/**
+	 * Called when an assistant response was discarded because it carried GPT-5
+	 * Harmony protocol leakage and is about to be re-requested (or, on the final
+	 * attempt, has exhausted the retry budget).
+	 *
+	 * `message` is the error message the loop closes the discarded response with, so
+	 * a UI can surface the same reason. Fires zero times for non-mitigation models.
+	 */
+	onHarmonyLeak?: HarmonyLeakHook;
+}
+
+/** Signature of {@link AgentLoopConfig.onHarmonyLeak}. */
+export type HarmonyLeakHook = (leak: HarmonyLeakContext, signal?: AbortSignal) => Promise<void> | void;
+
+/** Reported to {@link AgentLoopConfig.onHarmonyLeak} for each discarded leaked response. */
+export interface HarmonyLeakContext {
+	/** Zero-based index of the discarded attempt within the current assistant turn. */
+	attempt: number;
+	/** Which surface tripped and which signal classes fired. */
+	detection: HarmonyDetection;
+	/** The error message the loop closed the discarded response with. */
+	message: AssistantMessage;
 }
 
 /**

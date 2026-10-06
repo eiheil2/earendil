@@ -5,9 +5,12 @@
 
 import {
 	type AssistantMessage,
+	detectHarmonyLeakInAssistantMessage,
 	EventStream,
 	getCurrentTools,
 	getToolStateChanges,
+	type HarmonyDetection,
+	isHarmonyLeakMitigationTarget,
 	normalizeContext,
 	type SystemMessage,
 	type ToolResultMessage,
@@ -375,8 +378,23 @@ function withToolChanges(message: SystemMessage, { toolsAdded, toolsRemoved }: T
 }
 
 /**
- * Stream an assistant response from the LLM.
- * This is where AgentMessage[] gets transformed to Message[] for the LLM.
+ * Maximum number of times a single assistant turn is re-requested after Harmony
+ * protocol leakage, before the turn is escalated to a terminal error.
+ */
+const HARMONY_LEAK_MAX_RETRIES = 2;
+
+/**
+ * Stream one assistant response, re-requesting it when the response carries
+ * GPT-5 Harmony protocol leakage.
+ *
+ * A leaked response is never committed: the message is removed from the context
+ * before the retry, so no contaminated text or tool call reaches the transcript,
+ * the tool dispatcher, or the UI. Every attempt still emits the `message_start` /
+ * `message_end` pair its own streaming produced (paired with the discard reason),
+ * because a UI that already opened a message needs to be told it closed.
+ *
+ * After {@link HARMONY_LEAK_MAX_RETRIES} leaked attempts the turn resolves to a
+ * terminal error message instead of a leaked one.
  */
 async function streamAssistantResponse(
 	context: AgentContext,
@@ -385,6 +403,59 @@ async function streamAssistantResponse(
 	emit: AgentEventSink,
 	streamFunction: StreamFn,
 ): Promise<AssistantMessage> {
+	for (let attempt = 0; ; attempt++) {
+		const messageStartIndex = context.messages.length;
+		const outcome = await streamAssistantTurn(context, config, signal, emit, streamFunction);
+
+		if (!outcome.leaked) return outcome.message;
+
+		// Drop the streamed partial so no contaminated text reaches the next request.
+		context.messages.splice(messageStartIndex);
+		const discarded = discardedHarmonyMessage(outcome.message, attempt);
+		await config.onHarmonyLeak?.({ attempt, detection: outcome.leaked.detection, message: discarded }, signal);
+
+		if (attempt >= HARMONY_LEAK_MAX_RETRIES || signal?.aborted) {
+			// The retry budget is spent, so this response is the turn's outcome. It still has
+			// to close the message lifecycle the streaming already opened.
+			await emit({ type: "message_end", message: discarded });
+			return discarded;
+		}
+		// A retry emits nothing: the attempt's `message_start` is replaced by the next
+		// attempt's, and committing an error message here would put a phantom turn in the
+		// transcript even though the retry answers normally.
+	}
+}
+
+/** Outcome of one streamed turn, before the caller decides whether to accept it. */
+type AssistantTurnOutcome =
+	| { message: AssistantMessage; leaked?: undefined }
+	| { message: AssistantMessage; leaked: { detection: HarmonyDetection } };
+
+/** The terminal message for a turn whose leakage did not clear within the retry budget. */
+function discardedHarmonyMessage(message: AssistantMessage, attempt: number): AssistantMessage {
+	const reason =
+		attempt >= HARMONY_LEAK_MAX_RETRIES
+			? `Detected GPT-5 Harmony protocol leakage and gave up after ${attempt + 1} attempts.`
+			: `Detected GPT-5 Harmony protocol leakage; discarding this response and retrying.`;
+	return {
+		...message,
+		content: [],
+		stopReason: "error",
+		errorMessage: reason,
+	};
+}
+
+/**
+ * Stream a single assistant response from the LLM.
+ * This is where AgentMessage[] gets transformed to Message[] for the LLM.
+ */
+async function streamAssistantTurn(
+	context: AgentContext,
+	config: AgentLoopConfig,
+	signal: AbortSignal | undefined,
+	emit: AgentEventSink,
+	streamFunction: StreamFn,
+): Promise<AssistantTurnOutcome> {
 	// Apply context transform if configured (AgentMessage[] → AgentMessage[])
 	let messages = context.messages;
 	if (config.transformContext) {
@@ -408,6 +479,8 @@ async function streamAssistantResponse(
 	// Record the requested level, whichever stream function answered.
 	const result = async () => Object.assign(await response.result(), { thinkingLevel: config.reasoning ?? "off" });
 
+	// Harmony leak detection runs only for the one provider whose rules declare the axis.
+	const mitigate = isHarmonyLeakMitigationTarget(config.model);
 	let partialMessage: AssistantMessage | null = null;
 	let addedPartial = false;
 
@@ -443,29 +516,44 @@ async function streamAssistantResponse(
 			case "done":
 			case "error": {
 				const finalMessage = await result();
-				if (addedPartial) {
-					context.messages[context.messages.length - 1] = finalMessage;
-				} else {
-					context.messages.push(finalMessage);
-				}
-				if (!addedPartial) {
-					await emit({ type: "message_start", message: { ...finalMessage } });
-				}
-				await emit({ type: "message_end", message: finalMessage });
-				return finalMessage;
+				return commitAssistantMessage(context, finalMessage, addedPartial, mitigate, emit);
 			}
 		}
 	}
 
 	const finalMessage = await result();
+	return commitAssistantMessage(context, finalMessage, addedPartial, mitigate, emit);
+}
+
+/**
+ * Commit a finished response to the context and close its message lifecycle, unless
+ * it carries Harmony protocol leakage from a mitigation target — in which case the
+ * caller is told to discard and re-request instead.
+ *
+ * Returns without emitting when leaking, so a leaked response produces no
+ * `message_end` of its own and never reaches the transcript or tool dispatch.
+ */
+async function commitAssistantMessage(
+	context: AgentContext,
+	finalMessage: AssistantMessage,
+	addedPartial: boolean,
+	mitigate: boolean,
+	emit: AgentEventSink,
+): Promise<AssistantTurnOutcome> {
+	if (mitigate) {
+		const detection = detectHarmonyLeakInAssistantMessage(finalMessage);
+		if (detection) return { message: finalMessage, leaked: { detection } };
+	}
 	if (addedPartial) {
 		context.messages[context.messages.length - 1] = finalMessage;
 	} else {
 		context.messages.push(finalMessage);
+	}
+	if (!addedPartial) {
 		await emit({ type: "message_start", message: { ...finalMessage } });
 	}
 	await emit({ type: "message_end", message: finalMessage });
-	return finalMessage;
+	return { message: finalMessage };
 }
 
 /**

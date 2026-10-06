@@ -26,6 +26,7 @@ import type {
 	BeforeToolCallContext,
 	BeforeToolCallResult,
 	FinishTurn,
+	HarmonyLeakHook,
 	PrepareNextTurnContext,
 	PrepareRequest,
 	QueueMode,
@@ -143,6 +144,11 @@ export interface AgentOptions {
 	 * it, or immediately if it already passed when the run starts.
 	 */
 	deadline?: number;
+	/**
+	 * Reports each assistant response the loop discarded for GPT-5 Harmony protocol leakage
+	 * and is about to re-request. Fires zero times for providers that do not declare the axis.
+	 */
+	onHarmonyLeak?: HarmonyLeakHook;
 	toolExecution?: ToolExecutionMode;
 }
 
@@ -235,6 +241,8 @@ export class Agent {
 	 * signal, aborting with a `DOMException` named `TimeoutError` once the clock passes it.
 	 */
 	public deadline?: number;
+	/** Reports each assistant response the loop discarded for GPT-5 Harmony protocol leakage. */
+	public onHarmonyLeak?: HarmonyLeakHook;
 	/** Tool execution strategy for assistant messages that contain multiple tool calls. */
 	public toolExecution: ToolExecutionMode;
 
@@ -262,6 +270,7 @@ export class Agent {
 		this.transport = runtimeOptions.transport ?? "auto";
 		this.maxRetryDelayMs = runtimeOptions.maxRetryDelayMs;
 		this.deadline = runtimeOptions.deadline;
+		this.onHarmonyLeak = runtimeOptions.onHarmonyLeak;
 		this.toolExecution = runtimeOptions.toolExecution ?? "parallel";
 	}
 
@@ -491,6 +500,7 @@ export class Agent {
 			toolExecution: this.toolExecution,
 			beforeToolCall: this.beforeToolCall,
 			afterToolCall: this.afterToolCall,
+			onHarmonyLeak: this.onHarmonyLeak,
 			finishTurn: this.finishTurn,
 			prepareRequest: this.prepareRequest,
 			prepareNextTurn:

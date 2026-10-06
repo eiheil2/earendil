@@ -13,6 +13,15 @@ import { formatNoModelsAvailableMessage } from "../../../core/auth-guidance.ts";
 import type { ModelRuntime } from "../../../core/model-runtime.ts";
 import { formatModelCandidateMeta, isSubscriptionBackedProvider } from "../model-candidate-meta.ts";
 import { refreshModelCatalogs } from "../model-catalog-refresh.ts";
+import {
+	buildCatalogEntries,
+	type CatalogEntry,
+	type CatalogFilter,
+	catalogSearchText,
+	matchesCatalogFilter,
+	parseCatalogQuery,
+	summarizeCatalog,
+} from "../model-catalog-view.ts";
 import { getModelSelectorSearchText } from "../model-search.ts";
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
@@ -22,6 +31,31 @@ interface ModelItem {
 	provider: string;
 	id: string;
 	model: Model<any>;
+	/** Catalog rows carry their browse facets so filtering never re-derives them. */
+	entry?: CatalogEntry;
+}
+
+/** Model ids are unique per type but not per catalog, so the type is part of the key. */
+function catalogEntryKey(entry: CatalogEntry): string {
+	return `${entry.modelType}\0${entry.provider}\0${entry.id}`;
+}
+
+function toCatalogEntry(item: ModelItem): CatalogEntry {
+	if (item.entry) return item.entry;
+	const model = item.model;
+	return {
+		model: model as never,
+		provider: model.provider,
+		id: model.id,
+		name: model.name,
+		modelType: "chat",
+		api: model.api,
+		inputCost: model.cost.input,
+		outputCost: model.cost.output,
+		contextWindow: model.contextWindow,
+		reasoning: model.reasoning,
+		images: model.input.includes("image"),
+	};
 }
 
 interface ScopedModelItem {
@@ -34,7 +68,13 @@ interface DefaultModelReference {
 	id: string;
 }
 
-type ModelScope = "all" | "scoped";
+/**
+ * `catalog` is the whole generated catalog, credential filtering off, so a user can
+ * look up a model before logging into a second provider. It is a third scope rather
+ * than the default because AC-C05 requires `/model` to lead with what the current
+ * credentials can actually use.
+ */
+type ModelScope = "all" | "scoped" | "catalog";
 
 /**
  * Component that renders a model selector with search
@@ -54,8 +94,12 @@ export class ModelSelectorComponent extends Container implements Focusable {
 	private listContainer: Container;
 	private allModels: ModelItem[] = [];
 	private scopedModelItems: ModelItem[] = [];
+	private catalogModelItems: ModelItem[] = [];
 	private activeModels: ModelItem[] = [];
 	private filteredModels: ModelItem[] = [];
+	/** Applied on top of the fuzzy match while the `catalog` scope is active. */
+	private catalogFilter: CatalogFilter = {};
+	private catalogEntries: CatalogEntry[] = [];
 	private selectedIndex: number = 0;
 	private currentModel?: Model<any>;
 	private modelRuntime: ModelRuntime;
@@ -102,16 +146,14 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		this.addChild(new DynamicBorder());
 		this.addChild(new Spacer(1));
 
-		// Add hint about model filtering
-		if (scopedModels.length > 0) {
-			this.scopeText = new Text(this.getScopeText(), 0, 0);
-			this.addChild(this.scopeText);
-			this.scopeHintText = new Text(this.getScopeHintText(), 0, 0);
-			this.addChild(this.scopeHintText);
-		} else {
-			const hintText = "Only showing models from configured providers. Use /login to add providers.";
-			this.addChild(new Text(theme.fg("warning", hintText), 0, 0));
-		}
+		// The scope switcher is always shown: the catalog scope is reachable even with
+		// nothing scoped, so hiding the switcher would make it undiscoverable.
+		this.scopeText = new Text(this.getScopeText(), 0, 0);
+		this.addChild(this.scopeText);
+		this.scopeHintText = new Text(this.getScopeHintText(), 0, 0);
+		this.addChild(this.scopeHintText);
+		const hintText = "Only showing models from configured providers. Use /login to add providers.";
+		this.addChild(new Text(theme.fg("warning", hintText), 0, 0));
 		this.addChild(new Spacer(1));
 
 		// Create search input
@@ -176,7 +218,14 @@ export class ModelSelectorComponent extends Container implements Focusable {
 			id: scoped.model.id,
 			model: scoped.model,
 		}));
-		this.activeModels = this.scope === "scoped" ? this.scopedModelItems : this.allModels;
+		this.catalogEntries = buildCatalogEntries(this.modelRuntime.getAllModels());
+		this.catalogModelItems = this.catalogEntries.map((entry) => ({
+			provider: entry.provider,
+			id: entry.id,
+			model: entry.model as Model<any>,
+			entry,
+		}));
+		this.activeModels = this.activeScopeModels();
 		this.filteredModels = this.activeModels;
 		const currentIndex = this.filteredModels.findIndex((item) => modelsAreEqual(this.currentModel, item.model));
 		this.selectedIndex =
@@ -247,14 +296,30 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		return sorted;
 	}
 
+	/** Scope cycle order for the tab key. `scoped` is skipped when nothing is scoped. */
+	private scopeOrder(): ModelScope[] {
+		return this.scopedModelItems.length > 0 ? ["all", "scoped", "catalog"] : ["all", "catalog"];
+	}
+
+	private activeScopeModels(): ModelItem[] {
+		if (this.scope === "scoped") return this.scopedModelItems;
+		if (this.scope === "catalog") return this.catalogModelItems;
+		return this.allModels;
+	}
+
 	private getScopeText(): string {
-		const allText = this.scope === "all" ? theme.fg("accent", "all") : theme.fg("muted", "all");
-		const scopedText = this.scope === "scoped" ? theme.fg("accent", "scoped") : theme.fg("muted", "scoped");
-		return `${theme.fg("muted", "Scope: ")}${allText}${theme.fg("muted", " | ")}${scopedText}`;
+		const label = (scope: ModelScope): string =>
+			this.scope === scope ? theme.fg("accent", scope) : theme.fg("muted", scope);
+		return `${theme.fg("muted", "Scope: ")}${this.scopeOrder().map(label).join(theme.fg("muted", " | "))}`;
 	}
 
 	private getScopeHintText(): string {
-		return keyHint("tui.input.tab", "scope") + theme.fg("muted", " (all/scoped)");
+		const scopes = this.scopeOrder().join("/");
+		const suffix =
+			this.scope === "catalog"
+				? theme.fg("muted", " · filters: provider: api: type: images reasoning free under: ctx:")
+				: "";
+		return keyHint("tui.input.tab", "scope") + theme.fg("muted", ` (${scopes})`) + suffix;
 	}
 
 	private isDefaultModel(model: Model<any>): boolean {
@@ -269,16 +334,34 @@ export class ModelSelectorComponent extends Container implements Focusable {
 	private setScope(scope: ModelScope): void {
 		if (this.scope === scope) return;
 		this.scope = scope;
-		this.activeModels = this.scope === "scoped" ? this.scopedModelItems : this.allModels;
+		this.activeModels = this.activeScopeModels();
 		const currentIndex = this.activeModels.findIndex((item) => modelsAreEqual(this.currentModel, item.model));
 		this.selectedIndex = currentIndex >= 0 ? currentIndex : 0;
-		this.filterModels(this.searchInput.getValue());
+		// The two scopes speak different query languages: the catalog scope reads facets
+		// (`provider:groq`), the credential-backed scopes read a bare fuzzy term. Carrying a
+		// query across would leave `provider:groq` matching nothing on the other side, so
+		// the input is reset and the scope starts unfiltered.
+		this.searchInput.setValue("");
+		this.filterModels("");
 		if (this.scopeText) {
 			this.scopeText.setText(this.getScopeText());
 		}
+		if (this.scopeHintText) {
+			this.scopeHintText.setText(this.getScopeHintText());
+		}
 	}
 
+	/**
+	 * Narrow the active scope. In the catalog scope the query doubles as a filter
+	 * language (`provider:groq ctx:1m`), so the facets are parsed out and applied
+	 * before the remaining text goes to the fuzzy matcher.
+	 */
 	private filterModels(query: string): void {
+		if (this.scope === "catalog") {
+			this.filterCatalog(query);
+			return;
+		}
+		this.catalogFilter = {};
 		if (query) {
 			const filtered = fuzzyFilter(this.activeModels, query, (item) => {
 				const defaultText = this.isDefaultModel(item.model) ? " default" : "";
@@ -302,6 +385,66 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		// clamped to the (restored) list length.
 		this.selectedIndex = query ? 0 : Math.min(this.selectedIndex, Math.max(0, this.filteredModels.length - 1));
 		this.updateList();
+	}
+
+	private filterCatalog(query: string): void {
+		const parsed = parseCatalogQuery(query);
+		this.catalogFilter = parsed.filter;
+		const allowed = new Set(
+			this.catalogEntries.filter((entry) => matchesCatalogFilter(entry, parsed.filter)).map(catalogEntryKey),
+		);
+		const candidates = this.catalogModelItems.filter((item) => allowed.has(catalogEntryKey(toCatalogEntry(item))));
+		this.filteredModels = parsed.text
+			? fuzzyFilter(candidates, parsed.text, (item) => catalogSearchText(toCatalogEntry(item)))
+			: candidates;
+		this.selectedIndex = query ? 0 : Math.min(this.selectedIndex, Math.max(0, this.filteredModels.length - 1));
+		this.updateList();
+	}
+
+	/**
+	 * Row annotation. The catalog scope answers a lookup question, so it reports the
+	 * transport api, model type, and price; the credential-backed scopes keep the
+	 * AC-C05 billing annotation, which is about what the current subscription covers.
+	 */
+	private formatRowMeta(item: ModelItem): string {
+		if (this.scope !== "catalog") {
+			return theme.fg(
+				"muted",
+				` · ${formatModelCandidateMeta(item.model, {
+					subscription: isSubscriptionBackedProvider(this.modelRuntime, item.provider),
+				})}`,
+			);
+		}
+		const entry = toCatalogEntry(item);
+		const bits = [entry.api, entry.modelType === "chat" ? undefined : entry.modelType];
+		if (entry.reasoning) bits.push("reasoning");
+		if (entry.images) bits.push("images");
+		bits.push(entry.inputCost === 0 && entry.outputCost === 0 ? "free" : `$${entry.inputCost}/$${entry.outputCost}`);
+		return theme.fg("muted", ` · ${bits.filter(Boolean).join(" · ")}`);
+	}
+
+	/**
+	 * Facet counts for the current result set. An empty result set reports zero rather
+	 * than an empty range, so the line explains the miss instead of rendering blanks.
+	 */
+	private catalogSummaryLines(): Text[] {
+		const matching = this.catalogEntries.filter((entry) => matchesCatalogFilter(entry, this.catalogFilter));
+		const summary = summarizeCatalog(matching);
+		const price =
+			summary.minInputCost === summary.maxInputCost
+				? `$${summary.minInputCost}/M in`
+				: `$${summary.minInputCost}-$${summary.maxInputCost}/M in`;
+		return [
+			new Text(theme.fg("muted", `  ${matching.length} models`), 0, 0),
+			new Text(
+				theme.fg(
+					"muted",
+					`  ${summary.providers} providers · ${summary.apis} apis · ${price} · ${summary.images} with images · ${summary.reasoning} reasoning · ${summary.free} free`,
+				),
+				0,
+				0,
+			),
+		];
 	}
 
 	private updateList(): void {
@@ -328,13 +471,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 			const currentMarker = isCurrent ? theme.fg("accent", "✓ ") : "  ";
 			const modelText = isSelected ? theme.fg("accent", item.id) : item.id;
 			const providerBadge = theme.fg("muted", `[${item.provider}]`);
-			const meta = theme.fg(
-				"muted",
-				` · ${formatModelCandidateMeta(item.model, {
-					subscription: isSubscriptionBackedProvider(this.modelRuntime, item.provider),
-				})}`,
-			);
-			const line = `${cursor}${currentMarker}${modelText} ${providerBadge}${meta}${defaultBadge}`;
+			const line = `${cursor}${currentMarker}${modelText} ${providerBadge}${this.formatRowMeta(item)}${defaultBadge}`;
 
 			this.listContainer.addChild(new Text(line, 0, 0));
 		}
@@ -343,6 +480,13 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		if (startIndex > 0 || endIndex < this.filteredModels.length) {
 			const scrollInfo = theme.fg("muted", `  (${this.selectedIndex + 1}/${this.filteredModels.length})`);
 			this.listContainer.addChild(new Text(scrollInfo, 0, 0));
+		}
+
+		if (this.scope === "catalog") {
+			this.listContainer.addChild(new Spacer(1));
+			for (const line of this.catalogSummaryLines()) {
+				this.listContainer.addChild(line);
+			}
 		}
 
 		// Show error message or "no results" if empty
@@ -354,7 +498,11 @@ export class ModelSelectorComponent extends Container implements Focusable {
 			}
 		} else if (this.filteredModels.length === 0) {
 			// No credential-backed models at all: guide to /login instead of a dead end (AC-C05).
-			if (this.activeModels.length === 0) {
+			// The catalog scope never shows that guidance; an empty result there means the
+			// query was too narrow, and /login would not help.
+			if (this.scope === "catalog") {
+				this.listContainer.addChild(new Text(theme.fg("muted", "  No catalog models match this query"), 0, 0));
+			} else if (this.activeModels.length === 0) {
 				for (const guidanceLine of formatNoModelsAvailableMessage().split("\n")) {
 					this.listContainer.addChild(new Text(theme.fg("muted", `  ${guidanceLine}`), 0, 0));
 				}
@@ -377,13 +525,9 @@ export class ModelSelectorComponent extends Container implements Focusable {
 	handleInput(keyData: string): void {
 		const kb = getKeybindings();
 		if (kb.matches(keyData, "tui.input.tab")) {
-			if (this.scopedModelItems.length > 0) {
-				const nextScope: ModelScope = this.scope === "all" ? "scoped" : "all";
-				this.setScope(nextScope);
-				if (this.scopeHintText) {
-					this.scopeHintText.setText(this.getScopeHintText());
-				}
-			}
+			const order = this.scopeOrder();
+			const next = order[(order.indexOf(this.scope) + 1) % order.length];
+			this.setScope(next);
 			return;
 		}
 		// Up arrow - wrap to bottom when at top

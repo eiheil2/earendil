@@ -104,6 +104,74 @@ describe("model selector", () => {
 		expect(saveDefault).toHaveBeenCalledWith(currentModel);
 	});
 
+	it("reaches the full catalog by tab and filters it by facet, keeping the credential scopes reachable", async () => {
+		harness = await createHarness({
+			models: [
+				{ id: "alpha-1", name: "Alpha One", reasoning: true },
+				{ id: "beta-1", name: "Beta One", reasoning: false },
+			],
+		});
+		const selector = new ModelSelectorComponent(
+			createFakeTui(),
+			harness.getModel("alpha-1")!,
+			harness.session.modelRuntime,
+			[],
+			() => {},
+			() => {},
+		);
+		const rendered = (): string => stripAnsi(selector.render(120).join("\n"));
+		await vi.waitFor(() => {
+			expect(rendered()).toContain("Model catalogs refreshed.");
+		});
+
+		// Tab cycles into the catalog scope, which browses models no credential covers.
+		selector.handleInput("\t");
+		const catalogView = rendered();
+		expect(catalogView).toContain("catalog");
+		expect(catalogView).toMatch(/\d+ models/);
+		expect(catalogView).toContain("providers ·");
+
+		// A provider facet narrows the whole catalog (thousands of rows) to the two models
+		// the harness registered, and the header reports that narrow range.
+		for (const char of "provider:faux") {
+			selector.handleInput(char);
+		}
+		const faceted = rendered().replace(/[ \t]+\n/g, "\n");
+		expect(faceted).toMatch(/2 models\n\s+1 providers · 1 apis · \$0\/M in/);
+
+		// Tab returns to the credential-backed scope. The facet query does not leak into it,
+		// because `provider:faux` means nothing to a plain fuzzy match.
+		selector.handleInput("\t");
+		expect(rendered()).toContain("alpha-1 [");
+		expect(rendered()).not.toContain("No matching models");
+		selector.dispose();
+	});
+
+	it("keeps a too-narrow catalog query from dead-ending on /login guidance", async () => {
+		harness = await createHarness({
+			models: [{ id: "alpha-1", name: "Alpha One", reasoning: true }],
+		});
+		const selector = new ModelSelectorComponent(
+			createFakeTui(),
+			harness.getModel("alpha-1")!,
+			harness.session.modelRuntime,
+			[],
+			() => {},
+			() => {},
+		);
+		const rendered = (): string => stripAnsi(selector.render(120).join("\n"));
+
+		selector.handleInput("\t");
+		for (const char of "ctx:99m") {
+			selector.handleInput(char);
+		}
+		// No model in the catalog has a 99M window, so the list empties. The /login
+		// guidance belongs to the credential-backed scopes; here it would be a wrong turn.
+		expect(rendered()).toContain("No catalog models match this query");
+		expect(rendered()).toContain("0 models");
+		selector.dispose();
+	});
+
 	it("lists every catalog that failed to refresh", async () => {
 		harness = await createHarness();
 		vi.spyOn(harness.session.modelRuntime, "refresh").mockResolvedValue({
