@@ -125,6 +125,14 @@ type InteractiveBashContext = {
 	pendingBashComponents: unknown[];
 	isBashMode: boolean;
 	handleBashCommand(command: string, excludeFromContext?: boolean): Promise<void>;
+	// AC-D06 gate: handleBashCommand asks this first; defaults keep `pwd` on the pass-through path.
+	confirmDestructiveCommand(command: string): Promise<boolean>;
+	settingsManager: {
+		getConfirmDestructive(): boolean;
+		getPermissionPreset(): string;
+		getDestructiveConfirmNoticeSeen(): boolean;
+		markDestructiveConfirmNoticeSeen(): void;
+	};
 	showError(message: string): void;
 	updateEditorBorderColor(): void;
 };
@@ -132,6 +140,7 @@ type InteractiveBashContext = {
 const interactiveModePrototype = InteractiveMode.prototype as unknown as {
 	setupEditorSubmitHandler(this: InteractiveBashContext): void;
 	handleBashCommand(this: InteractiveBashContext, command: string, excludeFromContext?: boolean): Promise<void>;
+	confirmDestructiveCommand(this: InteractiveBashContext, command: string): Promise<boolean>;
 };
 
 const localResult = {
@@ -247,6 +256,13 @@ describe("Interactive user_bash failure handling (#9068)", () => {
 			pendingBashComponents: [],
 			isBashMode: true,
 			handleBashCommand: interactiveModePrototype.handleBashCommand,
+			confirmDestructiveCommand: interactiveModePrototype.confirmDestructiveCommand,
+			settingsManager: {
+				getConfirmDestructive: () => true,
+				getPermissionPreset: () => "workspace-write",
+				getDestructiveConfirmNoticeSeen: () => true,
+				markDestructiveConfirmNoticeSeen: () => {},
+			},
 			showError: vi.fn(),
 			updateEditorBorderColor: vi.fn(),
 		};

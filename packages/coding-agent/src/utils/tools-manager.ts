@@ -11,7 +11,8 @@ const TOOLS_DIR = getBinDir();
 const NETWORK_TIMEOUT_MS = 10_000;
 const DOWNLOAD_TIMEOUT_MS = 120_000;
 
-function isOfflineModeEnabled(): boolean {
+/** True when PI_OFFLINE disables startup network operations (AC-D03 shares this truth). */
+export function isOfflineModeEnabled(): boolean {
 	const value = process.env.PI_OFFLINE;
 	if (!value) return false;
 	return value === "1" || value.toLowerCase() === "true" || value.toLowerCase() === "yes";
@@ -336,6 +337,17 @@ const TERMUX_PACKAGES: Record<string, string> = {
 	rg: "ripgrep",
 };
 
+/**
+ * The exact Termux install command for a managed tool, or null when this platform is not
+ * Android/Termux. Android needs a local build because the downloaded Linux binaries are
+ * glibc-linked while Termux ships Bionic, so the automatic download (AC-D02) cannot help
+ * there; the startup self-check card prints this command verbatim (AC-D04).
+ */
+export function termuxInstallCommand(tool: "fd" | "rg", plat: string = platform()): string | null {
+	if (plat !== "android") return null;
+	return `pkg install ${TERMUX_PACKAGES[tool] ?? tool}`;
+}
+
 export interface ToolStatus {
 	type: "info" | "warning";
 	message: string;
@@ -365,9 +377,9 @@ export async function ensureTool(
 
 	// On Android/Termux, Linux binaries don't work due to Bionic libc incompatibility.
 	// Users must install via pkg.
-	if (platform() === "android") {
-		const pkgName = TERMUX_PACKAGES[tool] ?? tool;
-		onStatus?.({ type: "warning", message: `${config.name} not found. Install with: pkg install ${pkgName}` });
+	const termuxCommand = termuxInstallCommand(tool);
+	if (termuxCommand) {
+		onStatus?.({ type: "warning", message: `${config.name} not found. Install with: ${termuxCommand}` });
 		return undefined;
 	}
 

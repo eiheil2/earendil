@@ -104,6 +104,11 @@ import {
 } from "../../core/model-resolver.ts";
 import { CredentialSynchronizationError } from "../../core/model-runtime.ts";
 import { DefaultPackageManager } from "../../core/package-manager.ts";
+import {
+	confirmationMechanismNotice,
+	permissionBoundaryLines,
+	requiresConfirmation,
+} from "../../core/permission-gate.ts";
 import { RADIUS_MCP_URL, RADIUS_PROVIDER_ID } from "../../core/radius.ts";
 import type { ResourceDiagnostic } from "../../core/resource-loader.ts";
 import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../core/session-cwd.ts";
@@ -116,6 +121,14 @@ import {
 import type { FullscreenExitOutput, TuiMode } from "../../core/settings-manager.ts";
 import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
+import {
+	hasBlockedSelfCheck,
+	runStartupSelfChecks,
+	type SelfCheckState,
+	type StartupSelfCheck,
+	startNetworkProbe,
+	summarizeSelfChecks,
+} from "../../core/startup-selfcheck.ts";
 import { isInstallTelemetryEnabled } from "../../core/telemetry.ts";
 import { withBuiltInRenderers } from "../../core/tools/renderers/index.ts";
 import type { TruncationResult } from "../../core/tools/truncate.ts";
@@ -130,7 +143,7 @@ import { getCwdRelativePath } from "../../utils/paths.ts";
 import { getPiUserAgent } from "../../utils/pi-user-agent.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import { loadAllHighlightLanguages } from "../../utils/syntax-highlight.ts";
-import { ensureTool, type ToolStatus } from "../../utils/tools-manager.ts";
+import { ensureTool, isOfflineModeEnabled, type ToolStatus } from "../../utils/tools-manager.ts";
 import { checkForNewPiVersion, type LatestPiRelease } from "../../utils/version-check.ts";
 import { reportBug } from "./bug-report.ts";
 import { createChatViewport } from "./chat-viewport.ts";
@@ -862,6 +875,65 @@ export class InteractiveMode {
 		this.chatContainer.addChild(new DynamicBorder());
 	}
 
+	/**
+	 * Startup self-check card (AC-D01) carrying the first-screen permission/sandbox boundary
+	 * (AC-D07).
+	 *
+	 * It is mounted in the chat container, which the viewport orders after the header and the
+	 * loaded resources and before the first message, so both blocks are on the first screen.
+	 * A blocked check is rendered even when quietStartup hides the other startup details,
+	 * because "cannot write here" is the one row that must not be silenced.
+	 */
+	private showStartupSelfCheckCard(checks: readonly StartupSelfCheck[]): void {
+		if (!this.shouldShowStartupDetails() && !hasBlockedSelfCheck(checks)) {
+			return;
+		}
+
+		const stateLabel: Record<SelfCheckState, string> = { ready: "ok", degraded: "degraded", blocked: "blocked" };
+		const stateGlyph: Record<SelfCheckState, string> = { ready: "\u2713", degraded: "\u25b3", blocked: "\u2717" };
+		const stateColor: Record<SelfCheckState, ThemeColor> = {
+			ready: "success",
+			degraded: "warning",
+			blocked: "error",
+		};
+		const summary = summarizeSelfChecks(checks);
+		const addLine = (color: ThemeColor, text: string): void => {
+			this.chatContainer.addChild(new ThemedText(() => theme.fg(color, text), 1, 0));
+		};
+
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(new DynamicBorder());
+		addLine("accent", theme.bold("Startup self-check"));
+		addLine("dim", `${summary.ready} ready, ${summary.degraded} degraded, ${summary.blocked} blocked`);
+		for (const check of checks) {
+			addLine(
+				stateColor[check.state],
+				`  ${stateGlyph[check.state]} [${stateLabel[check.state]}] ${check.label}: ${check.detail}`,
+			);
+			if (check.loss) {
+				addLine("dim", `      loss: ${check.loss}`);
+			}
+			if (check.state !== "ready" && check.fix) {
+				addLine("muted", `      fix:  ${check.fix}`);
+			}
+		}
+
+		this.chatContainer.addChild(new Spacer(1));
+		addLine("accent", theme.bold("Permissions & sandbox"));
+		for (const line of permissionBoundaryLines({
+			preset: this.settingsManager.getPermissionPreset(),
+			confirmDestructive: this.settingsManager.getConfirmDestructive(),
+			cwd: this.sessionManager.getCwd(),
+		})) {
+			addLine("muted", `  ${line}`);
+		}
+		if (summary.degraded + summary.blocked > 0) {
+			addLine("dim", `  Run ${APP_NAME} doctor for the full pasteable report.`);
+		}
+		this.chatContainer.addChild(new DynamicBorder());
+		this.ui.requestRender();
+	}
+
 	private mountInteractiveTui(tui: TuiMainScreen | TuiAltScreen, components: readonly Component[]): void {
 		for (const component of components) tui.addChild(component);
 		if (TuiLayouts.isViewportTUI(tui)) {
@@ -1075,6 +1147,9 @@ export class InteractiveMode {
 		// Ensure fd and rg are available after mounting the TUI (downloads if missing, adds to PATH via getBinDir)
 		// so slow downloads do not make startup appear frozen.
 		// Both are needed: fd for autocomplete, rg for grep tool and bash commands.
+		// The startup self-check's network probe starts first so its <=2s budget (AC-D01) overlaps
+		// the tool setup instead of adding to it; offline mode never opens a connection (AC-D03).
+		const networkProbe = isOfflineModeEnabled() ? undefined : startNetworkProbe();
 		const [fdPath] = await Promise.all([
 			ensureTool("fd", (status) => this.showManagedToolStatus(status)),
 			ensureTool("rg", (status) => this.showManagedToolStatus(status)),
@@ -1085,6 +1160,10 @@ export class InteractiveMode {
 		this.setupKeyHandlers();
 		this.setupEditorSubmitHandler();
 		this.ui.requestRender();
+
+		// Self-check after the tool setup so the fd/rg rows report the state the user gets.
+		const selfChecks = await runStartupSelfChecks(networkProbe ? { probeNetwork: () => networkProbe } : {});
+		this.showStartupSelfCheckCard(selfChecks);
 
 		// Initialize extensions first so resources are shown before messages
 		await this.rebindCurrentSession();
@@ -4876,6 +4955,9 @@ export class InteractiveMode {
 					autoResizeImages: this.settingsManager.getImageAutoResize(),
 					blockImages: this.settingsManager.getBlockImages(),
 					enableSkillCommands: this.settingsManager.getEnableSkillCommands(),
+					builtinRules: this.settingsManager.getBuiltinRules(),
+					builtinSkills: this.settingsManager.getBuiltinSkills(),
+					builtinPrompts: this.settingsManager.getBuiltinPrompts(),
 					steeringMode: this.session.steeringMode,
 					followUpMode: this.session.followUpMode,
 					transport: this.settingsManager.getTransport(),
@@ -4896,6 +4978,8 @@ export class InteractiveMode {
 					showHardwareCursor: this.settingsManager.getShowHardwareCursor(),
 					showCacheMissNotices: this.settingsManager.getShowCacheMissNotices(),
 					defaultProjectTrust: this.settingsManager.getDefaultProjectTrust(),
+					permissionPreset: this.settingsManager.getPermissionPreset(),
+					confirmDestructive: this.settingsManager.getConfirmDestructive(),
 					editorPaddingX: this.settingsManager.getEditorPaddingX(),
 					outputPad: this.settingsManager.getOutputPad(),
 					autocompleteMaxVisible: this.settingsManager.getAutocompleteMaxVisible(),
@@ -4908,6 +4992,7 @@ export class InteractiveMode {
 					fullscreenCopyOnSelect: this.settingsManager.getFullscreenCopyOnSelect(),
 					fullscreenWheelScrollLines: this.settingsManager.getFullscreenWheelScrollLines(),
 					warnings: this.settingsManager.getWarnings(),
+					inheritedAssets: this.settingsManager.getInheritedAssets(),
 				},
 				{
 					onAutoCompactChange: (enabled) => {
@@ -4939,6 +5024,18 @@ export class InteractiveMode {
 					onEnableSkillCommandsChange: (enabled) => {
 						this.settingsManager.setEnableSkillCommands(enabled);
 						this.setupAutocompleteProvider();
+					},
+					onBuiltinRulesChange: (enabled) => {
+						this.settingsManager.setBuiltinRules(enabled);
+						this.showStatus(`Built-in rules ${enabled ? "enabled" : "disabled"}; run /reload to apply.`);
+					},
+					onBuiltinSkillsChange: (enabled) => {
+						this.settingsManager.setBuiltinSkills(enabled);
+						this.showStatus(`Built-in skills ${enabled ? "enabled" : "disabled"}; run /reload to apply.`);
+					},
+					onBuiltinPromptsChange: (enabled) => {
+						this.settingsManager.setBuiltinPrompts(enabled);
+						this.showStatus(`Built-in prompts ${enabled ? "enabled" : "disabled"}; run /reload to apply.`);
 					},
 					onSteeringModeChange: (mode) => {
 						this.session.setSteeringMode(mode);
@@ -5010,6 +5107,12 @@ export class InteractiveMode {
 					},
 					onDefaultProjectTrustChange: (defaultProjectTrust) => {
 						this.settingsManager.setDefaultProjectTrust(defaultProjectTrust);
+					},
+					onPermissionPresetChange: (preset) => {
+						this.settingsManager.setPermissionPreset(preset);
+					},
+					onConfirmDestructiveChange: (enabled) => {
+						this.settingsManager.setConfirmDestructive(enabled);
 					},
 					onDoubleEscapeActionChange: (action) => {
 						this.settingsManager.setDoubleEscapeAction(action);
@@ -5093,6 +5196,9 @@ export class InteractiveMode {
 					},
 					onWarningsChange: (warnings) => {
 						this.settingsManager.setWarnings(warnings);
+					},
+					onInheritedAssetToggle: (id, enabled) => {
+						this.settingsManager.setInheritedAssetEnabled(id, enabled);
 					},
 					onCancel: () => {
 						done();
@@ -6909,7 +7015,34 @@ export class InteractiveMode {
 		this.ui.requestRender();
 	}
 
+	/**
+	 * Destructive-operation confirmation (AC-D06): on by default, explained before it first
+	 * runs, and switched off by one settings value or by the danger-full-access preset.
+	 *
+	 * Returns false when the answer is "No"; the command is then never emitted to the
+	 * `user_bash` hook, so no extension sees a command the user rejected.
+	 */
+	private async confirmDestructiveCommand(command: string): Promise<boolean> {
+		const confirmDestructive = this.settingsManager.getConfirmDestructive();
+		const preset = this.settingsManager.getPermissionPreset();
+		if (!requiresConfirmation(command, { confirmDestructive, preset })) {
+			return true;
+		}
+		const firstTime = !this.settingsManager.getDestructiveConfirmNoticeSeen();
+		const notice = confirmationMechanismNotice({ firstTime, preset });
+		this.settingsManager.markDestructiveConfirmNoticeSeen();
+		const shownCommand = command.length > 300 ? `${command.slice(0, 300)}...` : command;
+		const confirmed = await this.showExtensionConfirm("Destructive command", `${shownCommand}\n\n${notice}`);
+		if (!confirmed) {
+			this.showStatus("Command cancelled; nothing ran.");
+		}
+		return confirmed;
+	}
+
 	private async handleBashCommand(command: string, excludeFromContext = false): Promise<void> {
+		if (!(await this.confirmDestructiveCommand(command))) {
+			return;
+		}
 		const extensionRunner = this.session.extensionRunner;
 
 		// Emit user_bash event to let extensions intercept
