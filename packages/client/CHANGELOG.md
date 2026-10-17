@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added a browser-compatible HTTP POST/SSE byte transport.
+
 ## [1.0.0] - 2026-10-01
 
 ## [0.99.2] - 2026-09-30

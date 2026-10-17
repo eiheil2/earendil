@@ -45,6 +45,8 @@
 			"@earendil-works/pi-server": ["./packages/server/src/index.ts"],
 			"@earendil-works/pi-server/unix": ["./packages/server/src/transports/unix/index.ts"],
 			"@earendil-works/pi-server/*": ["./packages/server/src/*"],
+			"@earendil-works/pi-web-host": ["./packages/web-host/src/index.ts"],
+			"@earendil-works/pi-web-host/*": ["./packages/web-host/src/*"],
 			"typebox": ["./node_modules/typebox"],
 			"@earendil-works/pi-tui": ["./packages/tui/src/index.ts"],
 			"@earendil-works/pi-tui/*": ["./packages/tui/src/*"],

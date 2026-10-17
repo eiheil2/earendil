@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Exported byte connection listener types for transport adapters.
+
 ## [1.0.0] - 2026-10-01
 
 ### Breaking Changes

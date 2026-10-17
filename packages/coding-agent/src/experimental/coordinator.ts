@@ -572,6 +572,7 @@ async function restrictSocket(path: string): Promise<void> {
 }
 
 async function removeStaleSocket(path: string): Promise<void> {
+	if (process.platform === "win32") return;
 	try {
 		const stats = await lstat(path);
 		if (!stats.isSocket()) throw new Error(`Coordinator path is not a socket: ${path}`);

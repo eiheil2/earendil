@@ -49,11 +49,14 @@ class UnixListener implements ServerListener {
 		if (this.closing) throw new Error("Unix listener is closing or closed");
 		this.accept = accept;
 
-		const ownedBindPath = getOwnedBindPath(this.path);
-		await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
-		await removeStaleSocket(this.path);
-		await removeStaleSocket(ownedBindPath);
-		this.ownedBindPath = ownedBindPath;
+		const namedPipe = process.platform === "win32";
+		const ownedBindPath = namedPipe ? this.path : getOwnedBindPath(this.path);
+		if (!namedPipe) {
+			await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
+			await removeStaleSocket(this.path);
+			await removeStaleSocket(ownedBindPath);
+			this.ownedBindPath = ownedBindPath;
+		}
 		const server = createServer((socket) => this.acceptSocket(socket));
 		server.on("error", (error) => this.reportError(error));
 		this.server = server;
@@ -71,6 +74,7 @@ class UnixListener implements ServerListener {
 				server.once("listening", onListening);
 				server.listen(ownedBindPath);
 			});
+			if (namedPipe) return;
 			const stats = await lstat(ownedBindPath);
 			if (!stats.isSocket()) throw new Error(`Unix listener path is not a socket after binding: ${ownedBindPath}`);
 			this.socketIdentity = { dev: stats.dev, ino: stats.ino };

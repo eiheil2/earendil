@@ -10,11 +10,12 @@ import { createUnixTransportFactory, type UnixServerRoute } from "@earendil-work
 import { isServerId, type ServerId } from "@earendil-works/pi-protocol";
 import {
 	ServerError as RoutedServerError,
-	type Server,
+	Server,
 	type ServerHost,
 	SessionNotFoundError,
 } from "@earendil-works/pi-server";
-import { createUnixServer, getUnixSocketPath } from "@earendil-works/pi-server/unix";
+import { createUnixListener, getLocalSocketPath, getUnixSocketPath } from "@earendil-works/pi-server/unix";
+import { createHttpTransportListener, createWebHost } from "@earendil-works/pi-web-host";
 import lockfile from "proper-lockfile";
 import type { AuthInput } from "../cli/experimental/command-options.ts";
 import { getAgentDir } from "../config.ts";
@@ -56,6 +57,11 @@ export function resolveServerDirectory(directory?: string): string {
 }
 
 export async function ensurePrivateServerDirectory(directory: string): Promise<void> {
+	if (process.platform === "win32") {
+		await mkdir(directory, { recursive: true });
+		if (!(await lstat(directory)).isDirectory()) throw new Error(`Server path is not a directory: ${directory}`);
+		return;
+	}
 	if (typeof process.getuid !== "function") throw new Error("Unix socket directory requires a POSIX user ID");
 	await mkdir(directory, { recursive: true, mode: 0o700 });
 	const stats = await lstat(directory);
@@ -326,8 +332,23 @@ export interface RunningServer {
 	readonly socketPath: string;
 	readonly server: Server;
 	readonly workerPids: ReadonlyMap<string, number>;
+	readonly web?: RunningWebServer;
 	readonly closed: Promise<void>;
 	close(): Promise<void>;
+}
+
+export interface WebServerOptions {
+	readonly host?: "127.0.0.1" | "0.0.0.0";
+	readonly port?: number;
+	/** Generated automatically when omitted; keep this value private to the local browser profile. */
+	readonly token?: string;
+}
+
+export interface RunningWebServer {
+	readonly host: string;
+	readonly port: number;
+	readonly url: string;
+	readonly token: string;
 }
 
 export interface StartServerOptions {
@@ -343,6 +364,8 @@ export interface StartServerOptions {
 	readonly model?: string;
 	/** Hold the server open without client or Session demand. Defaults to true for foreground servers. */
 	readonly keepAlive?: boolean;
+	/** Optional loopback-first browser transport attached to the same Session server. */
+	readonly web?: WebServerOptions;
 	/** Optional explicit Radius credential. Stored Radius auth is used when omitted. */
 	readonly relayAuth?: AuthInput;
 	/** Explicit plugin packages. Undefined restores the logical server profile; an empty list clears it. */
@@ -360,6 +383,7 @@ interface StartServerBackendOptions {
 	readonly path: string;
 	readonly serverId: ServerId;
 	readonly sessionDir?: string;
+	readonly web?: WebServerOptions;
 	resolveSessionPlugins(
 		metadata: SessionCatalogMetadata,
 		packagePaths: readonly string[] | undefined,
@@ -442,16 +466,21 @@ async function startServerBackend(
 	};
 	const socketPath = options.path;
 	const closeCatalog = (): Promise<void> => serverServices.dispose();
-	const server = createUnixServer(host, {
+	const webHost = options.web === undefined ? undefined : createWebHost(options.web);
+	const webListener = webHost === undefined ? undefined : createHttpTransportListener(webHost);
+	const server = new Server(host, {
 		serverId,
-		path: socketPath,
-		mode: 0o600,
+		listeners: [
+			createUnixListener({ path: socketPath, mode: 0o600 }),
+			...(webListener === undefined ? [] : [webListener]),
+		],
 		onConnectionCountChanged,
 	});
 	try {
+		await webHost?.start();
 		await server.start();
 	} catch (error) {
-		const cleanup = await Promise.allSettled([server.close(), closeCatalog()]);
+		const cleanup = await Promise.allSettled([server.close(), webHost?.close(), closeCatalog()]);
 		const cleanupErrors = cleanup.flatMap((result) => (result.status === "rejected" ? [result.reason] : []));
 		if (cleanupErrors.length > 0) {
 			throw new AggregateError([error, ...cleanupErrors], "Experimental server startup and cleanup failed");
@@ -460,14 +489,17 @@ async function startServerBackend(
 	}
 
 	let closePromise: Promise<void> | undefined;
+	const closeWebHost = (): Promise<void> => webHost?.close() ?? Promise.resolve();
 	const closed = server.closed.then(
-		() => closeCatalog(),
+		async () => {
+			await closeWebHost();
+			await closeCatalog();
+		},
 		async (serverError: unknown) => {
-			try {
-				await closeCatalog();
-			} catch (repoError) {
-				throw new AggregateError([serverError, repoError], "Server and repository shutdown failed");
-			}
+			const cleanup = await Promise.allSettled([closeWebHost(), closeCatalog()]);
+			const cleanupErrors = cleanup.flatMap((result) => (result.status === "rejected" ? [result.reason] : []));
+			if (cleanupErrors.length > 0)
+				throw new AggregateError([serverError, ...cleanupErrors], "Server and repository shutdown failed");
 			throw serverError;
 		},
 	);
@@ -477,6 +509,13 @@ async function startServerBackend(
 		socketPath,
 		server,
 		workerPids: workers.workerPids,
+		web:
+			webHost?.address === undefined
+				? undefined
+				: {
+						...webHost.address,
+						token: webHost.token,
+					},
 		closed,
 		refreshSessions: () => serverServices.refresh(BACKGROUND_CONTEXT),
 		close() {
@@ -580,9 +619,9 @@ export async function startServer(options: StartServerOptions = {}): Promise<Run
 			return reloaded.presentationArtifacts;
 		};
 		const socketPath = getUnixSocketPath(serverId, directory);
-		const controlPath = join(directory, `control-${serverId}.sock`);
+		const controlPath = getLocalSocketPath(`control-${serverId}.sock`, directory);
 		const serverNonce = randomUUID().replaceAll("-", "").slice(0, 12);
-		const serverPath = join(directory, `server-${serverId}-${serverNonce}.sock`);
+		const serverPath = getLocalSocketPath(`server-${serverId}-${serverNonce}.sock`, directory);
 		startupLease = await ensureCoordinator(socketPath, controlPath);
 		coordinator = new CoordinatorConnection({ controlPath, endpoint: serverPath });
 		const sessionDir = resolveSessionDirectory(options.sessionDir);
@@ -594,6 +633,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Run
 				path: serverPath,
 				serverId,
 				sessionDir: options.sessionDir,
+				web: options.web,
 				resolveSessionPlugins,
 				removeSessionPlugins,
 				reloadPresentationFacetBundles,
@@ -634,6 +674,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Run
 			socketPath,
 			server: activeBackend.server,
 			workerPids: activeWorkers.workerPids,
+			web: activeBackend.web,
 			closed: activeBackend.closed.finally(() => activeRelay.close()),
 			close() {
 				lifetime.stop();

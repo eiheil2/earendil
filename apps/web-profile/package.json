@@ -1,0 +1,35 @@
+{
+  "name": "@earendil-works/pi-web-profile",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "bundle": "node bundle.mjs",
+    "start": "node serve.mjs",
+    "start:local": "node --import ../../packages/coding-agent/src/experimental/source-resolver.ts start-local.mjs",
+    "test:windows": "node --import ../../packages/coding-agent/src/experimental/source-resolver.ts --test test/windows-runtime.test.mjs"
+  },
+  "dependencies": {
+    "@shikijs/langs": "4.3.1",
+    "clsx": "2.1.1",
+    "katex": "0.16.47",
+    "mdast-util-from-markdown": "2.0.3",
+    "mdast-util-gfm": "3.1.0",
+    "mdast-util-math": "3.0.0",
+    "micromark-core-commonmark": "2.0.3",
+    "micromark-extension-gfm": "3.0.0",
+    "micromark-extension-math": "3.1.0",
+    "micromark-factory-space": "2.0.1",
+    "micromark-util-character": "2.1.1",
+    "micromark-util-classify-character": "2.0.1",
+    "micromark-util-sanitize-uri": "2.0.1",
+    "micromark-util-symbol": "2.0.1",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "shiki": "4.3.1",
+    "simple-icons": "16.31.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
+}

@@ -47,6 +47,8 @@ A transport factory creates a fresh authenticated connection for each attempt. R
 
 Node.js and Bun consumers can use the separate Unix transport:
 
+On Windows, the same transport accepts an explicit `\\.\pipe\...` named pipe path returned by the server's address helper. Directory-based Unix discovery remains POSIX-only.
+
 ```ts
 import { Client } from "@earendil-works/pi-client";
 import { createUnixTransportFactory } from "@earendil-works/pi-client/unix";
